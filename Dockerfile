@@ -15,7 +15,9 @@ COPY frontend/ frontend/
 COPY entrypoint.sh .
 RUN mkdir -p data && chmod +x entrypoint.sh
 
+ARG GIT_COMMIT_SHA=unknown
 ENV PYTHONUNBUFFERED=1
+ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
 
 EXPOSE 8010
 
