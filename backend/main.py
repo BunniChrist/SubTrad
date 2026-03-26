@@ -51,6 +51,56 @@ app.include_router(translate_router)
 app.include_router(leads_router)
 
 
+@app.get("/api/debug-captions/{video_id}")
+def debug_captions(video_id: str) -> dict:
+    """Temporary debug endpoint — remove after fixing ASR."""
+    import os, traceback
+    try:
+        from backend.config import get_settings
+    except ModuleNotFoundError:
+        from config import get_settings
+    s = get_settings()
+    cookie_file = "/root/yt_cookies.txt" if os.path.exists("/root/yt_cookies.txt") else None
+    results = {}
+
+    # Step 1: captions.list
+    try:
+        import httpx
+        r = httpx.get("https://www.googleapis.com/youtube/v3/captions",
+                       params={"part": "snippet", "videoId": video_id, "key": s.youtube_api_key}, timeout=10)
+        tracks = r.json().get("items", [])
+        results["captions_list"] = [{"lang": t["snippet"]["language"], "kind": t["snippet"]["trackKind"]} for t in tracks]
+    except Exception as e:
+        results["captions_list_error"] = str(e)
+
+    # Step 2: timedtext ASR
+    try:
+        for lang in ["en", "fr"]:
+            r = httpx.get("https://www.youtube.com/api/timedtext",
+                           params={"v": video_id, "lang": lang, "kind": "asr", "fmt": "srv3"}, timeout=10)
+            results[f"timedtext_asr_{lang}"] = {"status": r.status_code, "size": len(r.text)}
+    except Exception as e:
+        results["timedtext_error"] = str(e)
+
+    # Step 3: yt-dlp
+    try:
+        from yt_dlp import YoutubeDL
+        opts = {"skip_download": True, "writesubtitles": True, "writeautomaticsub": True,
+                "quiet": True, "no_warnings": True, "ignore_no_formats_error": True}
+        if cookie_file:
+            opts["cookiefile"] = cookie_file
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+        auto = info.get("automatic_captions") or {}
+        subs = info.get("subtitles") or {}
+        results["ytdlp_auto_langs"] = len(auto)
+        results["ytdlp_manual_langs"] = list(subs.keys())
+    except Exception as e:
+        results["ytdlp_error"] = traceback.format_exc()[-500:]
+
+    return results
+
+
 @app.api_route("/", methods=["GET", "HEAD"])
 def serve_frontend_index() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
