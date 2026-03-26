@@ -32,10 +32,14 @@ def health_check() -> dict:
     except ModuleNotFoundError:
         from backend.config import get_settings
     s = get_settings()
+    import os
     return {
         "status": "ok",
         "yt_key_len": len(s.youtube_api_key),
         "yt_key_prefix": s.youtube_api_key[:8] if s.youtube_api_key else "EMPTY",
+        "openai_key_len": len(s.openai_api_key),
+        "env_yt_key": os.environ.get("SUBTRAD_YOUTUBE_API_KEY", "NOT_SET")[:8],
+        "env_keys": [k for k in os.environ if k.startswith("SUBTRAD_")],
     }
 
 
