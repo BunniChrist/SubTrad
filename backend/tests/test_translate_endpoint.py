@@ -114,7 +114,7 @@ def test_translate_returns_premium_redirect_for_long_videos(monkeypatch) -> None
     monkeypatch.setattr(
         translate,
         "fetch_video_duration_seconds",
-        lambda url: 721,
+        lambda url, proxy="": 721,
     )
 
     response = client.post(
@@ -136,7 +136,7 @@ def test_translate_returns_premium_redirect_for_long_videos(monkeypatch) -> None
 def test_translate_returns_clear_error_when_metadata_lookup_fails(monkeypatch) -> None:
     from backend.routers import translate
 
-    def raise_metadata_error(url: str) -> int:
+    def raise_metadata_error(url: str, proxy: str = "") -> int:
         raise RuntimeError("Metadata lookup blocked")
 
     monkeypatch.setattr(translate, "fetch_video_duration_seconds", raise_metadata_error)
@@ -163,12 +163,12 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "fetch_video_duration_seconds",
-        lambda url: 120,
+        lambda url, proxy="": 120,
     )
     monkeypatch.setattr(
         translate,
         "fetch_existing_subtitles",
-        lambda url: subtitles,
+        lambda url, proxy="": subtitles,
     )
     monkeypatch.setattr(
         translate,
@@ -208,17 +208,17 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
     monkeypatch.setattr(
         translate,
         "fetch_video_duration_seconds",
-        lambda url: 120,
+        lambda url, proxy="": 120,
     )
     monkeypatch.setattr(
         translate,
         "fetch_existing_subtitles",
-        lambda url: None,
+        lambda url, proxy="": None,
     )
     monkeypatch.setattr(
         translate,
         "extract_audio",
-        lambda url, video_id: f"/tmp/subtrad/{video_id}.m4a",
+        lambda url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
     )
     monkeypatch.setattr(
         translate,
@@ -270,12 +270,12 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
 def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> None:
     from backend.routers import translate
 
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url: 120)
-    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url: None)
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url, proxy="": None)
     monkeypatch.setattr(
         translate,
         "extract_audio",
-        lambda url, video_id: f"/tmp/subtrad/{video_id}.m4a",
+        lambda url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
     )
     cleanup_calls: list[str] = []
     monkeypatch.setattr(
@@ -312,11 +312,11 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
 def test_translate_returns_skipped_status_when_source_matches_target(monkeypatch) -> None:
     from backend.routers import translate
 
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url: 120)
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
     monkeypatch.setattr(
         translate,
         "fetch_existing_subtitles",
-        lambda url: [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}],
+        lambda url, proxy="": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}],
     )
     monkeypatch.setattr(
         translate,
@@ -347,8 +347,8 @@ def test_translate_returns_original_subtitles_with_warning_when_translation_fail
     from backend.routers import translate
 
     original_subtitles = [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}]
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url: 120)
-    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url: original_subtitles)
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url, proxy="": original_subtitles)
     monkeypatch.setattr(
         translate,
         "translate_subtitles_with_metadata",
@@ -390,12 +390,12 @@ def test_translate_processes_normally_before_cache_threshold(monkeypatch) -> Non
     )
     monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
     monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url: 120)
-    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url: None)
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url, proxy="": None)
     monkeypatch.setattr(
         translate,
         "extract_audio",
-        lambda url, video_id: f"/tmp/subtrad/{video_id}.m4a",
+        lambda url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
     )
     monkeypatch.setattr(
         translate,
@@ -453,11 +453,11 @@ def test_translate_returns_cached_response_after_threshold(monkeypatch) -> None:
     )
     monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
     monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url: 120)
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
     monkeypatch.setattr(
         translate,
         "fetch_existing_subtitles",
-        lambda url: [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}],
+        lambda url, proxy="": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}],
     )
 
     def fake_translate_subtitles(subtitles, target_lang, api_key, source_lang=None):

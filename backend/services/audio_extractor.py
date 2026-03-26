@@ -10,7 +10,7 @@ TEMP_AUDIO_DIR = Path("/tmp/subtrad")
 YOUTUBE_COOKIE_FILE = Path("/root/yt_cookies.txt")
 
 
-def extract_audio(url: str, video_id: str) -> str:
+def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
     TEMP_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     output_template = str(TEMP_AUDIO_DIR / f"{video_id}.%(ext)s")
     options = {
@@ -30,6 +30,8 @@ def extract_audio(url: str, video_id: str) -> str:
         age_days = (time.time() - YOUTUBE_COOKIE_FILE.stat().st_mtime) / 86400
         if age_days < 30:
             options["cookiefile"] = str(YOUTUBE_COOKIE_FILE)
+    if proxy:
+        options["proxy"] = proxy
 
     with YoutubeDL(options) as ydl:
         ydl.extract_info(url, download=True)

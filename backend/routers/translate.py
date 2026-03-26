@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api", tags=["translate"])
 YOUTUBE_COOKIE_FILE = Path("/root/yt_cookies.txt")
 
 
-def fetch_video_duration_seconds(url: str) -> int:
+def fetch_video_duration_seconds(url: str, proxy: str = "") -> int:
     options = {
         "skip_download": True,
         "quiet": True,
@@ -45,6 +45,8 @@ def fetch_video_duration_seconds(url: str) -> int:
     }
     if YOUTUBE_COOKIE_FILE.exists():
         options["cookiefile"] = str(YOUTUBE_COOKIE_FILE)
+    if proxy:
+        options["proxy"] = proxy
 
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -100,7 +102,7 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
         return TranslateResponse(**cached)
 
     try:
-        duration_seconds = fetch_video_duration_seconds(request.url)
+        duration_seconds = fetch_video_duration_seconds(request.url, proxy=settings.proxy_url)
     except Exception as exc:
         return JSONResponse(
             status_code=502,
@@ -121,7 +123,7 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
             },
         )
 
-    subtitles = fetch_existing_subtitles(request.url)
+    subtitles = fetch_existing_subtitles(request.url, proxy=settings.proxy_url)
     if subtitles is not None:
         translation_result = translate_subtitles_with_metadata(
             subtitles,
@@ -152,7 +154,7 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
 
     audio_path = ""
     try:
-        audio_path = extract_audio(request.url, video_id)
+        audio_path = extract_audio(request.url, video_id, proxy=settings.proxy_url)
         transcription_result = transcribe_audio_with_metadata(
             audio_path,
             settings.openai_api_key,
