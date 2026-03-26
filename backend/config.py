@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     cache_db_path: str = DEFAULT_CACHE_DB_PATH
     supported_languages: list[str] = ["fr", "es", "en", "ja"]
     openai_api_key: str = ""
+    youtube_api_key: str = ""
     proxy_url: str = ""
 
     model_config = SettingsConfigDict(env_prefix="subtrad_", extra="ignore")
