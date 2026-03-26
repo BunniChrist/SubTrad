@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     max_duration_seconds: int = 720
     cache_threshold: int = 100
     supported_languages: list[str] = ["fr", "es", "en", "ja"]
+    openai_api_key: str = ""
 
     model_config = SettingsConfigDict(env_prefix="subtrad_", extra="ignore")
 
