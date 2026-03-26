@@ -53,7 +53,7 @@ def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> N
         def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
             return {
                 "automatic_captions": {
-                    "en": [{"ext": "srt", "url": "https://example.com/captions.srt"}]
+                    "en": [{"ext": "srv3", "url": "https://example.com/captions.srv3"}]
                 }
             }
 
@@ -61,7 +61,7 @@ def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> N
 
     class FakeResponse:
         status_code = 200
-        text = "1\n00:00:01,000 --> 00:00:02,500\nHello world\n"
+        text = '<transcript><text start="1" dur="1.5">Hello world</text></transcript>'
 
     import httpx
     monkeypatch.setattr(httpx, "get", lambda *a, **kw: FakeResponse())
@@ -73,8 +73,8 @@ def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> N
     )
 
     assert result == [{
-        "start": "00:00:01,000",
-        "end": "00:00:02,500",
+        "start": "1.000",
+        "end": "2.500",
         "text": "Hello world",
     }]
     assert captured_options["proxy"] == "http://proxy.test"
