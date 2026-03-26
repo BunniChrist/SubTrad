@@ -67,7 +67,10 @@ def fetch_existing_subtitles(
                     continue
                 try:
                     import httpx
-                    resp = httpx.get(subtitle_url, timeout=15)
+                    client_kwargs = {"timeout": 15}
+                    if proxy:
+                        client_kwargs["proxy"] = proxy
+                    resp = httpx.get(subtitle_url, **client_kwargs)
                     if resp.status_code == 200 and resp.text.strip():
                         segments = parse_srt(resp.text)
                         if segments:

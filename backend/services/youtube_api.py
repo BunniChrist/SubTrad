@@ -120,7 +120,7 @@ def fetch_captions(
     tracks = data.get("items", [])
     if not tracks:
         for language in _build_asr_language_candidates(video_id, target_lang, api_key):
-            segments = _fetch_timedtext_segments(video_id, language, asr=True)
+            segments = _fetch_timedtext_segments(video_id, language, asr=True, proxy=proxy)
             if segments:
                 return segments
         youtube_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -135,11 +135,11 @@ def fetch_captions(
     chosen_lang = target_lang if target_lang in languages else languages[0]
 
     # Step 3: Try timedtext endpoint
-    segments = _fetch_timedtext_segments(video_id, chosen_lang)
+    segments = _fetch_timedtext_segments(video_id, chosen_lang, proxy=proxy)
     if segments:
         return segments
 
-    segments = _fetch_timedtext_segments(video_id, chosen_lang, asr=True)
+    segments = _fetch_timedtext_segments(video_id, chosen_lang, asr=True, proxy=proxy)
     if segments:
         return segments
 
@@ -186,12 +186,17 @@ def _fetch_timedtext_segments(
     language: str,
     *,
     asr: bool = False,
+    proxy: str = "",
 ) -> list[dict[str, str]]:
     timedtext_params = {"v": video_id, "lang": language, "fmt": "srv3"}
     if asr:
         timedtext_params["kind"] = "asr"
 
-    tt_response = httpx.get(TIMEDTEXT_BASE, params=timedtext_params, timeout=10)
+    client_kwargs = {"params": timedtext_params, "timeout": 10}
+    if proxy:
+        client_kwargs["proxy"] = proxy
+
+    tt_response = httpx.get(TIMEDTEXT_BASE, **client_kwargs)
     if tt_response.status_code != 200 or not tt_response.text.strip():
         return []
 

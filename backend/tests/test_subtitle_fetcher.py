@@ -59,6 +59,13 @@ def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> N
 
     monkeypatch.setattr("backend.services.subtitle_fetcher.YoutubeDL", FakeYoutubeDL)
 
+    class FakeResponse:
+        status_code = 200
+        text = "1\n00:00:01,000 --> 00:00:02,500\nHello world\n"
+
+    import httpx
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: FakeResponse())
+
     result = fetch_existing_subtitles(
         "https://www.youtube.com/watch?v=abc123",
         proxy="http://proxy.test",
@@ -66,9 +73,9 @@ def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> N
     )
 
     assert result == [{
-        "start": "00:00:00,000",
-        "end": "00:00:00,000",
-        "text": "https://example.com/captions.srt",
+        "start": "00:00:01,000",
+        "end": "00:00:02,500",
+        "text": "Hello world",
     }]
     assert captured_options["proxy"] == "http://proxy.test"
     assert captured_options["cookiefile"] == "/tmp/cookies.txt"
