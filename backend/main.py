@@ -34,7 +34,7 @@ app.include_router(translate_router)
 app.include_router(leads_router)
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def serve_frontend_index() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
 

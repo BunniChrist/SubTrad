@@ -13,12 +13,20 @@
     <script src="/js/api.js" defer></script>
     <script src="/js/player.js" defer></script>
     <script src="/js/subtitles.js" defer></script>
+    <script src="/js/ads.js" defer></script>
     <script src="/js/app.js" defer></script>
   </head>
   <body>
     <div class="page-shell">
-      <aside class="ad-slot ad-slot-left" aria-label="Advertisement">
-        <span>Ad space</span>
+      <aside
+        id="ad-banner-left"
+        class="ad-slot ad-banner ad-banner-left hidden"
+        aria-label="Advertisement"
+      >
+        <span class="ad-label">Ad</span>
+        <div class="ad-unit ad-unit-skyscraper" data-ad-slot="desktop-left-test">
+          <span class="ad-copy">160 x 600 banner</span>
+        </div>
       </aside>
 
       <main class="app-shell">
@@ -67,8 +75,15 @@
             <p class="status-copy">
               SubTrad is preparing the video and translation.
             </p>
-            <div class="ad-interstitial" aria-label="Interstitial ad placeholder">
-              <span>Ad placeholder</span>
+            <div
+              id="ad-interstitial"
+              class="ad-interstitial hidden"
+              aria-label="Interstitial ad placeholder"
+            >
+              <div class="ad-surface ad-unit-box" data-ad-slot="interstitial-test">
+                <span class="ad-label">Ad</span>
+                <p class="ad-copy">Interstitial placeholder during subtitle generation</p>
+              </div>
             </div>
           </section>
 
@@ -101,19 +116,44 @@
             </p>
           </div>
 
-          <div id="preroll-overlay" class="preroll-overlay hidden" aria-live="polite">
-            <span class="preroll-badge">Ad</span>
-            <p>Video starts in <span id="preroll-countdown">5</span>s</p>
-          </div>
-
           <div class="player-stage">
             <div id="player-container" class="player-container"></div>
-            <div id="subtitle-overlay" class="subtitle-overlay" aria-live="polite"></div>
+            <div id="ad-preroll" class="preroll-overlay hidden" aria-live="polite">
+              <div class="ad-surface ad-unit-box" data-ad-slot="preroll-test">
+                <span class="ad-label">Ad</span>
+                <p class="ad-copy">
+                  Your video starts in <span id="preroll-countdown">5</span>s
+                </p>
+              </div>
+            </div>
+            <div
+              id="ad-pause-overlay"
+              class="pause-overlay hidden"
+              aria-live="polite"
+              aria-label="Pause ad placeholder"
+            >
+              <div class="ad-surface ad-unit-box" data-ad-slot="pause-overlay-test">
+                <span class="ad-label">Ad</span>
+                <p class="ad-copy">Pause overlay placeholder</p>
+              </div>
+            </div>
+            <div
+              id="subtitle-overlay"
+              class="subtitle-overlay"
+              aria-live="polite"
+            ></div>
           </div>
         </section>
 
-        <aside class="ad-slot ad-slot-bottom" aria-label="Advertisement">
-          <span>Ad space</span>
+        <aside
+          id="ad-banner-bottom"
+          class="ad-slot ad-banner ad-banner-bottom hidden"
+          aria-label="Advertisement"
+        >
+          <span class="ad-label">Ad</span>
+          <div class="ad-unit ad-unit-mobile" data-ad-slot="mobile-bottom-test">
+            <span class="ad-copy">320 x 50 mobile banner</span>
+          </div>
         </aside>
 
         <footer class="site-footer">
@@ -124,8 +164,15 @@
         </footer>
       </main>
 
-      <aside class="ad-slot ad-slot-right" aria-label="Advertisement">
-        <span>Ad space</span>
+      <aside
+        id="ad-banner-right"
+        class="ad-slot ad-banner ad-banner-right hidden"
+        aria-label="Advertisement"
+      >
+        <span class="ad-label">Ad</span>
+        <div class="ad-unit ad-unit-skyscraper" data-ad-slot="desktop-right-test">
+          <span class="ad-copy">160 x 600 banner</span>
+        </div>
       </aside>
     </div>
 

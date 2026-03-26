@@ -23,13 +23,10 @@
     const translationStatus = $("translation-status");
     const playerContainer = $("player-container");
     const subtitleOverlay = $("subtitle-overlay");
-    const prerollOverlay = $("preroll-overlay");
-    const prerollCountdown = $("preroll-countdown");
     const resetButton = $("reset-button");
     const adElements = document.querySelectorAll(".ad-slot, .ad-interstitial");
 
     let activePlayer = null;
-    let prerollTimer = 0;
 
     function adsAllowed() {
       return window.subtradAdsAllowed === true;
@@ -60,12 +57,7 @@
     }
 
     function resetPlayerState() {
-      if (prerollTimer) {
-        clearInterval(prerollTimer);
-        prerollTimer = 0;
-      }
-
-      prerollOverlay.classList.add("hidden");
+      window.AdManager.destroyAll();
       window.SubTradSubtitles.destroySubtitles(subtitleOverlay);
 
       if (activePlayer) {
@@ -85,6 +77,7 @@
       premiumNotice.classList.add("hidden");
       form.classList.remove("hidden");
       resetPlayerState();
+      window.AdManager.hideInterstitial();
       urlInput.focus();
     }
 
@@ -98,6 +91,7 @@
 
     function showPremiumNotice() {
       setLoading(false);
+      window.AdManager.hideInterstitial();
       premiumNotice.classList.remove("hidden");
       form.classList.remove("hidden");
     }
@@ -109,26 +103,23 @@
       }
 
       return new Promise(function (resolve) {
-        let remaining = 5;
-        prerollCountdown.textContent = String(remaining);
-        prerollOverlay.classList.remove("hidden");
+        window.AdManager.showPreroll(resolve);
+      });
+    }
 
-        prerollTimer = window.setInterval(function () {
-          remaining -= 1;
-          prerollCountdown.textContent = String(Math.max(remaining, 0));
+    function bindPlayerAds(player) {
+      player.onPause(function () {
+        window.AdManager.showPauseAd();
+      });
 
-          if (remaining <= 0) {
-            clearInterval(prerollTimer);
-            prerollTimer = 0;
-            prerollOverlay.classList.add("hidden");
-            resolve();
-          }
-        }, 1000);
+      player.onPlay(function () {
+        window.AdManager.hidePauseAd();
       });
     }
 
     async function handleSuccessfulTranslation(responseData) {
       setLoading(false);
+      window.AdManager.hideInterstitial();
       clearError();
       renderMetadata(responseData);
       playerSection.classList.remove("hidden");
@@ -138,6 +129,9 @@
         responseData.video_id,
         playerContainer
       );
+      bindPlayerAds(activePlayer);
+      window.AdManager.initBanners();
+      window.AdManager.hidePauseAd();
       window.SubTradSubtitles.initSubtitles(
         responseData.subtitles || [],
         activePlayer,
@@ -164,6 +158,7 @@
         return;
       }
 
+      window.AdManager.showInterstitial();
       setLoading(true);
 
       try {
@@ -177,6 +172,7 @@
         await handleSuccessfulTranslation(responseData);
       } catch (error) {
         setLoading(false);
+        window.AdManager.hideInterstitial();
 
         if (error && error.status === 403) {
           showPremiumNotice();
