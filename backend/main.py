@@ -82,7 +82,7 @@ def debug_captions(video_id: str) -> dict:
     except Exception as e:
         results["timedtext_error"] = str(e)
 
-    # Step 3: yt-dlp
+    # Step 3: yt-dlp (no proxy)
     try:
         from yt_dlp import YoutubeDL
         opts = {"skip_download": True, "writesubtitles": True, "writeautomaticsub": True,
@@ -97,6 +97,21 @@ def debug_captions(video_id: str) -> dict:
         results["ytdlp_manual_langs"] = list(subs.keys())
     except Exception as e:
         results["ytdlp_error"] = traceback.format_exc()[-500:]
+
+    # Step 4: yt-dlp with proxy
+    try:
+        opts2 = {"skip_download": True, "writesubtitles": True, "writeautomaticsub": True,
+                 "quiet": True, "no_warnings": True, "ignore_no_formats_error": True}
+        if cookie_file:
+            opts2["cookiefile"] = cookie_file
+        if s.proxy_url:
+            opts2["proxy"] = s.proxy_url
+        with YoutubeDL(opts2) as ydl:
+            info2 = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+        auto2 = info2.get("automatic_captions") or {}
+        results["ytdlp_proxy_auto_langs"] = len(auto2)
+    except Exception as e:
+        results["ytdlp_proxy_error"] = traceback.format_exc()[-500:]
 
     return results
 
