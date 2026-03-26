@@ -26,9 +26,20 @@
     const prerollOverlay = $("preroll-overlay");
     const prerollCountdown = $("preroll-countdown");
     const resetButton = $("reset-button");
+    const adElements = document.querySelectorAll(".ad-slot, .ad-interstitial");
 
     let activePlayer = null;
     let prerollTimer = 0;
+
+    function adsAllowed() {
+      return window.subtradAdsAllowed === true;
+    }
+
+    function syncAdsVisibility() {
+      adElements.forEach(function (element) {
+        element.classList.toggle("hidden", !adsAllowed());
+      });
+    }
 
     function clearError() {
       errorElement.textContent = "";
@@ -92,6 +103,11 @@
     }
 
     function startPreroll() {
+      if (!adsAllowed()) {
+        prerollOverlay.classList.add("hidden");
+        return Promise.resolve();
+      }
+
       return new Promise(function (resolve) {
         let remaining = 5;
         prerollCountdown.textContent = String(remaining);
@@ -176,6 +192,11 @@
       resetUi();
     });
 
+    document.addEventListener("subtrad:cookie-consent-changed", function () {
+      syncAdsVisibility();
+    });
+
+    syncAdsVisibility();
     resetPlayerState();
   });
 })();
