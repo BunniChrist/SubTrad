@@ -692,12 +692,23 @@ button:disabled {
   }
 
   .app-shell {
+    grid-column: 2;
     width: 100%;
     padding: 0;
   }
 
-  .ad-banner-left,
+  .ad-banner-left {
+    grid-column: 1;
+    display: grid;
+    position: sticky;
+    top: var(--space-4);
+    justify-items: center;
+    min-height: 24rem;
+    margin-top: 0;
+  }
+
   .ad-banner-right {
+    grid-column: 3;
     display: grid;
     position: sticky;
     top: var(--space-4);
