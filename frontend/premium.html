@@ -4,18 +4,136 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SubTrad Premium</title>
+    <meta
+      name="description"
+      content="Reserve your place for SubTrad Premium and unlock longer videos, faster processing, and ad-free playback."
+    />
     <link rel="stylesheet" href="/css/style.css" />
+    <script src="/js/cookies.js" defer></script>
+    <script src="/js/leads.js" defer></script>
   </head>
   <body>
-    <main class="app-shell">
-      <section class="hero">
-        <p class="brand-mark">SubTrad Premium</p>
-        <h1>Longer videos are coming soon.</h1>
-        <p class="hero-copy">
-          Premium support for videos over 12 minutes is in preparation.
-        </p>
-        <p><a class="inline-link" href="/">Back to SubTrad</a></p>
+    <main class="app-shell marketing-shell">
+      <header class="page-topbar">
+        <a class="brand-mark brand-link" href="/">SubTrad</a>
+        <nav class="page-nav" aria-label="Primary">
+          <a href="/">Home</a>
+          <a href="/suggestions.html">Suggestions</a>
+        </nav>
+      </header>
+
+      <section class="hero marketing-hero">
+        <div class="hero-grid">
+          <div>
+            <p class="section-eyebrow">Premium Preview</p>
+            <h1>SubTrad Premium arrives soon.</h1>
+            <p class="hero-copy">
+              Unlimited video length. Priority processing. No ads. Reserve your
+              spot now if you would pay 12 EUR/month when Premium launches.
+            </p>
+
+            <div class="price-badge">12 EUR/month</div>
+
+            <section class="signup-meter" aria-labelledby="signup-counter">
+              <div class="meter-header">
+                <p id="signup-counter" class="meter-count">
+                  <span id="premium-signup-count">0</span>/200 people have signed up
+                </p>
+                <p class="meter-note">Goal: validate demand before launch.</p>
+              </div>
+              <div class="progress-track" aria-hidden="true">
+                <div
+                  id="premium-progress-bar"
+                  class="progress-fill"
+                  style="width: 0%"
+                ></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="lead-card" aria-labelledby="reserve-heading">
+            <p class="section-eyebrow">Join The Waitlist</p>
+            <h2 id="reserve-heading">Reserve my spot</h2>
+            <p class="status-copy">
+              No payment required now. We'll email you when Premium launches.
+            </p>
+
+            <form
+              id="lead-form"
+              class="lead-form"
+              data-lead-form
+              data-lead-type="premium"
+              novalidate
+            >
+              <label class="field-label" for="lead-email">Email</label>
+              <input
+                id="lead-email"
+                name="email"
+                type="email"
+                placeholder="you@example.com"
+                autocomplete="email"
+                required
+              />
+
+              <button id="lead-submit" type="submit">Reserve my spot</button>
+            </form>
+
+            <p id="lead-feedback" class="message hidden" role="status"></p>
+          </section>
+        </div>
       </section>
+
+      <section class="feature-grid" aria-label="Premium features">
+        <article class="feature-card">
+          <p class="section-eyebrow">Longer Videos</p>
+          <h2>Translate videos over 12 minutes</h2>
+          <p class="status-copy">
+            Remove the current duration limit and process full-length content.
+          </p>
+        </article>
+        <article class="feature-card">
+          <p class="section-eyebrow">Faster Queue</p>
+          <h2>Priority processing</h2>
+          <p class="status-copy">
+            Shorter wait times when you submit a video for subtitles.
+          </p>
+        </article>
+        <article class="feature-card">
+          <p class="section-eyebrow">Cleaner Playback</p>
+          <h2>No ads</h2>
+          <p class="status-copy">
+            Focus on the content without interstitials or banner placements.
+          </p>
+        </article>
+        <article class="feature-card">
+          <p class="section-eyebrow">Export</p>
+          <h2>Download subtitles as SRT</h2>
+          <p class="status-copy">
+            Save subtitle files for offline use and editing workflows.
+          </p>
+        </article>
+      </section>
+
+      <footer class="site-footer">
+        <a href="/">Home</a>
+        <a href="/suggestions.html">Suggestions</a>
+        <a href="/legal.html">Legal</a>
+        <a href="#" data-manage-cookies>Manage cookies</a>
+      </footer>
     </main>
+
+    <aside id="cookie-banner" class="cookie-banner hidden" aria-live="polite">
+      <p class="cookie-banner-copy">
+        SubTrad utilise des cookies publicitaires (Google AdSense) pour
+        financer le service. Aucune donnee personnelle n'est collectee par
+        SubTrad.
+      </p>
+      <div class="cookie-banner-actions">
+        <button type="button" data-cookie-action="accept">Accepter</button>
+        <button type="button" class="button-outline" data-cookie-action="reject">
+          Refuser
+        </button>
+      </div>
+    </aside>
   </body>
 </html>

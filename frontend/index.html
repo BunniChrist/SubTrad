@@ -9,6 +9,7 @@
       content="Understand any video, in any language."
     />
     <link rel="stylesheet" href="/css/style.css" />
+    <script src="/js/cookies.js" defer></script>
     <script src="/js/api.js" defer></script>
     <script src="/js/player.js" defer></script>
     <script src="/js/subtitles.js" defer></script>
@@ -116,8 +117,10 @@
         </aside>
 
         <footer class="site-footer">
-          <a href="#">Legal</a>
-          <a href="#">Suggestions</a>
+          <a href="/">Home</a>
+          <a href="/suggestions.html">Suggestions</a>
+          <a href="/legal.html">Legal</a>
+          <a href="#" data-manage-cookies>Manage cookies</a>
         </footer>
       </main>
 
@@ -125,5 +128,19 @@
         <span>Ad space</span>
       </aside>
     </div>
+
+    <aside id="cookie-banner" class="cookie-banner hidden" aria-live="polite">
+      <p class="cookie-banner-copy">
+        SubTrad utilise des cookies publicitaires (Google AdSense) pour
+        financer le service. Aucune donnee personnelle n'est collectee par
+        SubTrad.
+      </p>
+      <div class="cookie-banner-actions">
+        <button type="button" data-cookie-action="accept">Accepter</button>
+        <button type="button" class="button-outline" data-cookie-action="reject">
+          Refuser
+        </button>
+      </div>
+    </aside>
   </body>
 </html>

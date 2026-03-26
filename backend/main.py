@@ -6,8 +6,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
+    from backend.routers.leads import router as leads_router
     from backend.routers.translate import router as translate_router
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
+    from routers.leads import router as leads_router
     from routers.translate import router as translate_router
 
 
@@ -29,6 +31,7 @@ def health_check() -> dict[str, str]:
 
 
 app.include_router(translate_router)
+app.include_router(leads_router)
 
 
 @app.get("/")

@@ -21,6 +21,14 @@ def test_frontend_css_asset_is_served() -> None:
     assert "text/css" in response.headers["content-type"]
 
 
+def test_legal_page_is_served() -> None:
+    response = client.get("/legal.html")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "SubTrad - Informations legales" in response.text
+
+
 def test_health_endpoint_returns_ok_status() -> None:
     response = client.get("/api/health")
 

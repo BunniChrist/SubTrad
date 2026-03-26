@@ -14,5 +14,8 @@ build/
 *.wav
 *.tmp
 .DS_Store
+data/*
+!data/
+!data/.gitkeep
 !backend/tests/fixtures/
 !backend/tests/fixtures/*.mp3
