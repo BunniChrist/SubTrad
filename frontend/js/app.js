@@ -169,6 +169,16 @@
           return;
         }
 
+        if (responseData.reason === "no_captions") {
+          showError("Cette vid\u00e9o n'a pas de sous-titres disponibles.");
+          setLoading(false);
+          window.AdManager.hideInterstitial();
+          setTimeout(function () {
+            window.location.href = responseData.redirect || "/premium.html";
+          }, 2000);
+          return;
+        }
+
         await handleSuccessfulTranslation(responseData);
       } catch (error) {
         setLoading(false);
