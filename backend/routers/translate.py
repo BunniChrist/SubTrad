@@ -18,6 +18,7 @@ try:
     from backend.services.translator import translate_subtitles_with_metadata
     from backend.services.url_validator import detect_platform, validate_url
     from backend.services.video_id import extract_video_id
+    from backend.services.youtube_api import get_video_info, fetch_captions as fetch_captions_via_api
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
     from config import get_settings
     from models import TranslateRequest, TranslateResponse
@@ -30,6 +31,7 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
     from services.translator import translate_subtitles_with_metadata
     from services.url_validator import detect_platform, validate_url
     from services.video_id import extract_video_id
+    from services.youtube_api import get_video_info, fetch_captions as fetch_captions_via_api
 
 
 router = APIRouter(prefix="/api", tags=["translate"])
@@ -101,8 +103,123 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
         cached["translation_status"] = "cached"
         return TranslateResponse(**cached)
 
+    # --- YouTube: use YouTube Data API v3 ---
+    if platform == "youtube":
+        return _handle_youtube(
+            video_id=video_id,
+            target_lang=request.target_lang,
+            settings=settings,
+            cache=cache,
+            counter=counter,
+        )
+
+    # --- TikTok / Instagram: keep existing yt-dlp flow ---
+    return _handle_ytdlp(
+        url=request.url,
+        platform=platform,
+        video_id=video_id,
+        target_lang=request.target_lang,
+        settings=settings,
+        cache=cache,
+        counter=counter,
+    )
+
+
+def _handle_youtube(
+    *,
+    video_id: str,
+    target_lang: str,
+    settings,
+    cache: SubtitleCache,
+    counter: RequestCounter,
+) -> TranslateResponse:
+    """Handle YouTube videos via YouTube Data API v3."""
     try:
-        duration_seconds = fetch_video_duration_seconds(request.url, proxy=settings.proxy_url)
+        info = get_video_info(video_id, settings.youtube_api_key)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": "Video metadata lookup failed",
+                "error": str(exc),
+            },
+        )
+
+    if info is None:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": "Video metadata lookup failed",
+                "error": "Video not found",
+            },
+        )
+
+    duration_seconds = info["duration_seconds"]
+    duration_result = check_duration(duration_seconds)
+
+    if not duration_result.allowed:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Video exceeds maximum duration",
+                "redirect": duration_result.redirect,
+                "duration_seconds": duration_result.duration_seconds,
+            },
+        )
+
+    subtitles = fetch_captions_via_api(video_id, target_lang, settings.youtube_api_key)
+
+    if subtitles is None:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "redirect": "/premium.html",
+                "reason": "no_captions",
+            },
+        )
+
+    translation_result = translate_subtitles_with_metadata(
+        subtitles,
+        target_lang,
+        settings.openai_api_key,
+    )
+
+    response = build_translate_response(
+        platform="youtube",
+        video_id=video_id,
+        subtitles=translation_result["segments"]
+        if isinstance(translation_result, dict)
+        else translation_result.segments,
+        duration_seconds=duration_result.duration_seconds,
+        needs_transcription=False,
+        source="existing_captions",
+        target_lang=target_lang,
+        detected_language=translation_result["detected_language"]
+        if isinstance(translation_result, dict)
+        else translation_result.detected_language,
+        translation_status=translation_result["translation_status"]
+        if isinstance(translation_result, dict)
+        else translation_result.translation_status,
+    )
+    counter.increment(video_id, target_lang)
+    if counter.should_cache(video_id, target_lang):
+        cache.store(video_id, target_lang, response.model_dump())
+    return response
+
+
+def _handle_ytdlp(
+    *,
+    url: str,
+    platform: str,
+    video_id: str,
+    target_lang: str,
+    settings,
+    cache: SubtitleCache,
+    counter: RequestCounter,
+) -> TranslateResponse:
+    """Handle TikTok/Instagram videos via yt-dlp (existing flow)."""
+    try:
+        duration_seconds = fetch_video_duration_seconds(url, proxy=settings.proxy_url)
     except Exception as exc:
         return JSONResponse(
             status_code=502,
@@ -123,11 +240,11 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
             },
         )
 
-    subtitles = fetch_existing_subtitles(request.url, proxy=settings.proxy_url)
+    subtitles = fetch_existing_subtitles(url, proxy=settings.proxy_url)
     if subtitles is not None:
         translation_result = translate_subtitles_with_metadata(
             subtitles,
-            request.target_lang,
+            target_lang,
             settings.openai_api_key,
         )
         response = build_translate_response(
@@ -139,7 +256,7 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
             duration_seconds=duration_result.duration_seconds,
             needs_transcription=False,
             source="existing_captions",
-            target_lang=request.target_lang,
+            target_lang=target_lang,
             detected_language=translation_result["detected_language"]
             if isinstance(translation_result, dict)
             else translation_result.detected_language,
@@ -147,14 +264,14 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
             if isinstance(translation_result, dict)
             else translation_result.translation_status,
         )
-        counter.increment(video_id, request.target_lang)
-        if counter.should_cache(video_id, request.target_lang):
-            cache.store(video_id, request.target_lang, response.model_dump())
+        counter.increment(video_id, target_lang)
+        if counter.should_cache(video_id, target_lang):
+            cache.store(video_id, target_lang, response.model_dump())
         return response
 
     audio_path = ""
     try:
-        audio_path = extract_audio(request.url, video_id, proxy=settings.proxy_url)
+        audio_path = extract_audio(url, video_id, proxy=settings.proxy_url)
         transcription_result = transcribe_audio_with_metadata(
             audio_path,
             settings.openai_api_key,
@@ -173,7 +290,7 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
 
     translation_result = translate_subtitles_with_metadata(
         transcription_result["segments"],
-        request.target_lang,
+        target_lang,
         settings.openai_api_key,
         source_lang=transcription_result.get("language"),
     )
@@ -187,7 +304,7 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
         duration_seconds=duration_result.duration_seconds,
         needs_transcription=True,
         source="whisper_transcription",
-        target_lang=request.target_lang,
+        target_lang=target_lang,
         detected_language=translation_result["detected_language"]
         if isinstance(translation_result, dict)
         else translation_result.detected_language,
@@ -195,7 +312,7 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
         if isinstance(translation_result, dict)
         else translation_result.translation_status,
     )
-    counter.increment(video_id, request.target_lang)
-    if counter.should_cache(video_id, request.target_lang):
-        cache.store(video_id, request.target_lang, response.model_dump())
+    counter.increment(video_id, target_lang)
+    if counter.should_cache(video_id, target_lang):
+        cache.store(video_id, target_lang, response.model_dump())
     return response

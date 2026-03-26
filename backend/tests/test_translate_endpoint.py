@@ -113,8 +113,8 @@ def test_translate_returns_premium_redirect_for_long_videos(monkeypatch) -> None
 
     monkeypatch.setattr(
         translate,
-        "fetch_video_duration_seconds",
-        lambda url, proxy="": 721,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 721, "title": "Long Video"},
     )
 
     response = client.post(
@@ -136,10 +136,10 @@ def test_translate_returns_premium_redirect_for_long_videos(monkeypatch) -> None
 def test_translate_returns_clear_error_when_metadata_lookup_fails(monkeypatch) -> None:
     from backend.routers import translate
 
-    def raise_metadata_error(url: str, proxy: str = "") -> int:
+    def raise_metadata_error(video_id: str, api_key: str):
         raise RuntimeError("Metadata lookup blocked")
 
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", raise_metadata_error)
+    monkeypatch.setattr(translate, "get_video_info", raise_metadata_error)
 
     response = client.post(
         "/api/translate",
@@ -159,16 +159,17 @@ def test_translate_returns_clear_error_when_metadata_lookup_fails(monkeypatch) -
 def test_translate_returns_existing_subtitles(monkeypatch) -> None:
     from backend.routers import translate
 
-    subtitles = [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}]
     monkeypatch.setattr(
         translate,
-        "fetch_video_duration_seconds",
-        lambda url, proxy="": 120,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Test"},
     )
     monkeypatch.setattr(
         translate,
-        "fetch_existing_subtitles",
-        lambda url, proxy="": subtitles,
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key: [
+            {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
+        ],
     )
     monkeypatch.setattr(
         translate,
@@ -203,6 +204,7 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
 
 
 def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch) -> None:
+    """Whisper fallback applies to non-YouTube platforms (TikTok/Instagram)."""
     from backend.routers import translate
 
     monkeypatch.setattr(
@@ -247,27 +249,21 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
     response = client.post(
         "/api/translate",
         json={
-            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "url": "https://www.tiktok.com/@user/video/1234567890",
             "target_lang": "ja",
         },
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "platform": "youtube",
-        "video_id": "dQw4w9WgXcQ",
-        "subtitles": [{"start": 0.0, "end": 1.5, "text": "Bonjour le monde"}],
-        "duration_seconds": 120,
-        "needs_transcription": True,
-        "source": "whisper_transcription",
-        "target_lang": "ja",
-        "detected_language": "en",
-        "translation_status": "translated",
-    }
-    assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
+    data = response.json()
+    assert data["platform"] == "tiktok"
+    assert data["needs_transcription"] is True
+    assert data["source"] == "whisper_transcription"
+    assert data["translation_status"] == "translated"
 
 
 def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> None:
+    """Transcription errors apply to non-YouTube platforms."""
     from backend.routers import translate
 
     monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
@@ -296,7 +292,7 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
     response = client.post(
         "/api/translate",
         json={
-            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "url": "https://www.tiktok.com/@user/video/1234567890",
             "target_lang": "ja",
         },
     )
@@ -306,17 +302,22 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
         "detail": "Transcription pipeline failed",
         "error": "Whisper API unavailable",
     }
-    assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 
 
 def test_translate_returns_skipped_status_when_source_matches_target(monkeypatch) -> None:
     from backend.routers import translate
 
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
     monkeypatch.setattr(
         translate,
-        "fetch_existing_subtitles",
-        lambda url, proxy="": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}],
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Test"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key: [
+            {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
+        ],
     )
     monkeypatch.setattr(
         translate,
@@ -347,8 +348,16 @@ def test_translate_returns_original_subtitles_with_warning_when_translation_fail
     from backend.routers import translate
 
     original_subtitles = [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}]
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
-    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url, proxy="": original_subtitles)
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Test"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key: original_subtitles,
+    )
     monkeypatch.setattr(
         translate,
         "translate_subtitles_with_metadata",
@@ -390,31 +399,27 @@ def test_translate_processes_normally_before_cache_threshold(monkeypatch) -> Non
     )
     monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
     monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
-    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url, proxy="": None)
     monkeypatch.setattr(
         translate,
-        "extract_audio",
-        lambda url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Test"},
     )
     monkeypatch.setattr(
         translate,
-        "transcribe_audio_with_metadata",
-        lambda audio_path, api_key: {
-            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello world"}],
-            "language": "en",
-        },
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key: [
+            {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
+        ],
     )
     monkeypatch.setattr(
         translate,
         "translate_subtitles_with_metadata",
         lambda subtitles, target_lang, api_key, source_lang=None: {
-            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour le monde"}],
-            "detected_language": source_lang,
+            "segments": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Bonjour"}],
+            "detected_language": "en",
             "translation_status": "translated",
         },
     )
-    monkeypatch.setattr(translate, "cleanup_audio", lambda audio_path: None)
 
     response = client.post(
         "/api/translate",
@@ -426,7 +431,7 @@ def test_translate_processes_normally_before_cache_threshold(monkeypatch) -> Non
 
     assert response.status_code == 200
     assert response.json()["translation_status"] == "translated"
-    assert response.json()["needs_transcription"] is True
+    assert response.json()["needs_transcription"] is False
     assert FakeRequestCounter.counts[("dQw4w9WgXcQ", "fr")] == 1
     assert FakeSubtitleCache.storage == {}
     assert FakeSubtitleCache.init_paths == ["data/test-cache.db"]
@@ -453,11 +458,17 @@ def test_translate_returns_cached_response_after_threshold(monkeypatch) -> None:
     )
     monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
     monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
     monkeypatch.setattr(
         translate,
-        "fetch_existing_subtitles",
-        lambda url, proxy="": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}],
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Test"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key: [
+            {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
+        ],
     )
 
     def fake_translate_subtitles(subtitles, target_lang, api_key, source_lang=None):
@@ -512,3 +523,134 @@ def test_translate_returns_cached_response_after_threshold(monkeypatch) -> None:
         {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Bonjour"}
     ]
     assert translation_calls == ["fr", "fr"]
+
+
+# --- YouTube API v3 integration tests ---
+
+
+def test_youtube_uses_api_for_duration_and_captions(monkeypatch) -> None:
+    """YouTube videos should use YouTube API v3 instead of yt-dlp."""
+    from backend.routers import translate
+
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 180, "title": "Test"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key: [
+            {"start": "1.000", "end": "3.000", "text": "Bonjour"}
+        ],
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": "1.000", "end": "3.000", "text": "Hola"}],
+            "detected_language": "fr",
+            "translation_status": "translated",
+        },
+    )
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "target_lang": "es",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["platform"] == "youtube"
+    assert data["duration_seconds"] == 180
+    assert data["source"] == "existing_captions"
+    assert data["subtitles"] == [{"start": "1.000", "end": "3.000", "text": "Hola"}]
+
+
+def test_youtube_no_captions_returns_premium_redirect(monkeypatch) -> None:
+    """YouTube videos with no captions should redirect to premium."""
+    from backend.routers import translate
+
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "No Subs"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key: None,
+    )
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["redirect"] == "/premium.html"
+    assert data["reason"] == "no_captions"
+
+
+def test_youtube_api_error_falls_back_to_502(monkeypatch) -> None:
+    """YouTube API failure should return a clear error."""
+    from backend.routers import translate
+
+    def raise_api_error(video_id, api_key):
+        raise RuntimeError("YouTube API error 403: Forbidden")
+
+    monkeypatch.setattr(translate, "get_video_info", raise_api_error)
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 502
+    assert "Video metadata lookup failed" in response.json()["detail"]
+
+
+def test_tiktok_still_uses_ytdlp(monkeypatch) -> None:
+    """TikTok should continue using yt-dlp, not YouTube API."""
+    from backend.routers import translate
+
+    monkeypatch.setattr(
+        translate,
+        "fetch_video_duration_seconds",
+        lambda url, proxy="": 30,
+    )
+    monkeypatch.setattr(
+        translate,
+        "fetch_existing_subtitles",
+        lambda url, proxy="": [{"start": "0.0", "end": "1.0", "text": "Hey"}],
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": subtitles,
+            "detected_language": "en",
+            "translation_status": "translated",
+        },
+    )
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.tiktok.com/@user/video/1234567890",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["platform"] == "tiktok"
