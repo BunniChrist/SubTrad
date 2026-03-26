@@ -1,4 +1,4 @@
-# SubTranslate
+# SubTrad
 
 Free, anonymous web app for video subtitle translation.
 Paste a URL (YouTube, Instagram, TikTok) → get translated subtitles on the embedded player.
@@ -26,4 +26,4 @@ Each phase has a prompt in `docs/prompts/`.
 - Backend: Python 3.11+, FastAPI, yt-dlp, Whisper API, OpenAI API
 - Frontend: HTML5, CSS3, vanilla JS (coming in Phase 4)
 - Cache: SQLite
-- Deployment: Coolify on subtranslate.bunnichrist.fr
+- Deployment: Coolify on subtrad.bunnichrist.fr

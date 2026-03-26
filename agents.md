@@ -1,12 +1,12 @@
 # Agent Guidelines
 
-You are a coding agent working on the SubTranslate project. Read this file entirely before starting.
+You are a coding agent working on the SubTrad project. Read this file entirely before starting.
 
 ## Project
 
-SubTranslate is a free, anonymous web app. Users paste a video URL (YouTube, Instagram, TikTok), choose an output language, and watch the video with translated subtitles overlaid on the official embedded player.
+SubTrad is a free, anonymous web app. Users paste a video URL (YouTube, Instagram, TikTok), choose an output language, and watch the video with translated subtitles overlaid on the official embedded player.
 
-Full product spec: `docs/subtranslate-framing.md`
+Full product spec: `docs/subtrad-framing.md`
 
 ## Superpowers Framework
 

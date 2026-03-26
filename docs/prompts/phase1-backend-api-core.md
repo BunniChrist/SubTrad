@@ -3,16 +3,16 @@
 ## Setup
 
 - **Branch:** `feature/backend-api-core`
-- **Working directory:** `/root/Workspace`
+- **Working directory:** `/root/Workspace/SubTrad`
 - **First steps:**
   1. Read `agents.md` and follow it
   2. Read `superpowers/using-superpowers/SKILL.md` and announce your skill
   3. Create and switch to branch `feature/backend-api-core`
-  4. Read `docs/subtranslate-framing.md` for full product context
+  4. Read `docs/subtrad-framing.md` for full product context
 
 ## Goal
 
-Build the FastAPI backend foundation for SubTranslate: URL validation, platform detection, video ID extraction, duration checking, subtitle fetching, and the main translate endpoint (stub orchestrator).
+Build the FastAPI backend foundation for SubTrad: URL validation, platform detection, video ID extraction, duration checking, subtitle fetching, and the main translate endpoint (stub orchestrator).
 
 ## Tech Stack
 

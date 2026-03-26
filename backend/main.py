@@ -7,7 +7,7 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
     from routers.translate import router as translate_router
 
 
-app = FastAPI(title="SubTranslate Backend API")
+app = FastAPI(title="SubTrad Backend API")
 
 app.add_middleware(
     CORSMiddleware,
