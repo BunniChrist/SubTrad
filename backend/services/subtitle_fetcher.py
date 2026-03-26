@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import httpx
+import shutil
+import tempfile
+from pathlib import Path
+
 from yt_dlp import YoutubeDL
 
 
@@ -55,16 +58,6 @@ def _parse_vtt(vtt_content: str) -> list[dict[str, str]]:
 
     return entries
 
-
-def _find_best_track(tracks: list[dict]) -> dict | None:
-    """Find the best subtitle track from a list, preferring srv3 > vtt > srt."""
-    for fmt in _PREFERRED_FORMATS:
-        for track in tracks:
-            if track.get("ext") == fmt and track.get("url"):
-                return track
-    return None
-
-
 def _parse_track_content(content: str, ext: str) -> list[dict[str, str]]:
     """Parse subtitle content based on format."""
     if ext == "srv3":
@@ -84,10 +77,14 @@ def fetch_existing_subtitles(
     proxy: str = "",
     cookie_file: str | None = None,
 ) -> list[dict[str, str]] | None:
+    temp_dir = tempfile.mkdtemp(prefix="subtrad_")
     options = {
         "skip_download": True,
         "writesubtitles": True,
         "writeautomaticsub": True,
+        "subtitlesformat": "srv3",
+        "subtitleslangs": ["all"],
+        "outtmpl": str(Path(temp_dir) / "%(id)s"),
         "quiet": True,
         "no_warnings": True,
         "ignore_no_formats_error": True,
@@ -99,31 +96,17 @@ def fetch_existing_subtitles(
 
     try:
         with YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=False)
+            ydl.download([url])
+
+        for ext in _PREFERRED_FORMATS:
+            for subtitle_file in sorted(Path(temp_dir).glob(f"*.{ext}")):
+                content = subtitle_file.read_text(encoding="utf-8")
+                segments = _parse_track_content(content, ext)
+                if segments:
+                    return segments
     except Exception:
         return None
-
-    subtitle_groups = [
-        info.get("subtitles") or {},
-        info.get("automatic_captions") or {},
-    ]
-
-    client_kwargs = {"timeout": 15}
-    if proxy:
-        client_kwargs["proxy"] = proxy
-
-    for group in subtitle_groups:
-        for tracks in group.values():
-            track = _find_best_track(tracks)
-            if not track:
-                continue
-            try:
-                resp = httpx.get(track["url"], **client_kwargs)
-                if resp.status_code == 200 and resp.text.strip():
-                    segments = _parse_track_content(resp.text, track["ext"])
-                    if segments:
-                        return segments
-            except Exception:
-                continue
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
     return None

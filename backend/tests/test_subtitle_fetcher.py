@@ -1,3 +1,7 @@
+from pathlib import Path
+from types import SimpleNamespace
+
+import backend.services.subtitle_fetcher as subtitle_fetcher
 from backend.services.subtitle_fetcher import fetch_existing_subtitles, parse_srt
 
 
@@ -37,8 +41,14 @@ le monde
     ]
 
 
-def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> None:
+def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     captured_options: dict[str, object] = {}
+    captured_urls: list[str] = []
+    temp_dir = tmp_path / "downloaded-subs"
+    temp_dir.mkdir()
 
     class FakeYoutubeDL:
         def __init__(self, options: dict[str, object]) -> None:
@@ -50,21 +60,25 @@ def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> N
         def __exit__(self, exc_type, exc, tb) -> bool:
             return False
 
-        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
-            return {
-                "automatic_captions": {
-                    "en": [{"ext": "srv3", "url": "https://example.com/captions.srv3"}]
-                }
-            }
+        def download(self, urls: list[str]) -> None:
+            captured_urls.extend(urls)
+            (temp_dir / "fetch-existing-subtitles.en.srv3").write_text(
+                '<transcript><text start="1" dur="1.5">Hello world</text></transcript>',
+                encoding="utf-8",
+            )
 
     monkeypatch.setattr("backend.services.subtitle_fetcher.YoutubeDL", FakeYoutubeDL)
-
-    class FakeResponse:
-        status_code = 200
-        text = '<transcript><text start="1" dur="1.5">Hello world</text></transcript>'
-
-    import httpx
-    monkeypatch.setattr(httpx, "get", lambda *a, **kw: FakeResponse())
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "tempfile",
+        SimpleNamespace(mkdtemp=lambda prefix=None: str(temp_dir)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        subtitle_fetcher.shutil,
+        "rmtree",
+        lambda path, ignore_errors=True: None,
+    )
 
     result = fetch_existing_subtitles(
         "https://www.youtube.com/watch?v=abc123",
@@ -77,5 +91,62 @@ def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> N
         "end": "2.500",
         "text": "Hello world",
     }]
+    assert captured_urls == ["https://www.youtube.com/watch?v=abc123"]
     assert captured_options["proxy"] == "http://proxy.test"
     assert captured_options["cookiefile"] == "/tmp/cookies.txt"
+
+
+def test_fetch_existing_subtitles_downloads_and_cleans_up_srv3_files(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    captured_options: dict[str, object] = {}
+    captured_urls: list[str] = []
+    temp_dir = tmp_path / "yt-dlp-subs"
+    temp_dir.mkdir()
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def download(self, urls: list[str]) -> None:
+            captured_urls.extend(urls)
+            subtitle_file = temp_dir / "abc123.en.srv3"
+            subtitle_file.write_text(
+                '<transcript><text start="1" dur="1.5">Hello world</text></transcript>',
+                encoding="utf-8",
+            )
+
+    monkeypatch.setattr("backend.services.subtitle_fetcher.YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "tempfile",
+        SimpleNamespace(mkdtemp=lambda prefix=None: str(temp_dir)),
+        raising=False,
+    )
+
+    result = fetch_existing_subtitles(
+        "https://www.youtube.com/watch?v=abc123",
+        proxy="socks5h://10.0.1.1:40001",
+        cookie_file="/root/yt_cookies.txt",
+    )
+
+    assert result == [{
+        "start": "1.000",
+        "end": "2.500",
+        "text": "Hello world",
+    }]
+    assert captured_urls == ["https://www.youtube.com/watch?v=abc123"]
+    assert captured_options["proxy"] == "socks5h://10.0.1.1:40001"
+    assert captured_options["cookiefile"] == "/root/yt_cookies.txt"
+    assert captured_options["writesubtitles"] is True
+    assert captured_options["writeautomaticsub"] is True
+    assert captured_options["subtitlesformat"] == "srv3"
+    assert captured_options["subtitleslangs"] == ["all"]
+    assert not temp_dir.exists()
