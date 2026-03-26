@@ -1,10 +1,19 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from backend.routers import leads
 from backend.services.lead_store import LeadStore
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    leads._rate_limit_store.clear()
+    yield
+    leads._rate_limit_store.clear()
 
 
 def test_create_premium_lead_returns_created_response(monkeypatch) -> None:
@@ -120,6 +129,34 @@ def test_lead_count_endpoint_returns_current_count(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"type": "premium", "count": 42}
+
+
+def test_rate_limit_blocks_after_5_requests(monkeypatch) -> None:
+    class FakeLeadStore:
+        def save_lead(self, email: str, lead_type: str, message: str | None = None) -> int:
+            return 1
+
+        def get_lead_count(self, lead_type: str) -> int:
+            return 1
+
+        def lead_exists(self, email: str, lead_type: str) -> bool:
+            return False
+
+    monkeypatch.setattr(leads, "lead_store", FakeLeadStore())
+
+    for i in range(5):
+        resp = client.post(
+            "/api/leads",
+            json={"email": f"user{i}@example.com", "type": "premium"},
+        )
+        assert resp.status_code == 201
+
+    resp = client.post(
+        "/api/leads",
+        json={"email": "blocked@example.com", "type": "premium"},
+    )
+    assert resp.status_code == 429
+    assert resp.json()["detail"] == "Too many requests, please try again later"
 
 
 def test_lead_count_endpoint_works_with_real_sqlite_store(tmp_path, monkeypatch) -> None:

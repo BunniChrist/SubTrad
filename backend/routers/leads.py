@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+import time
+from collections import defaultdict
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
@@ -16,6 +18,11 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
 router = APIRouter(prefix="/api", tags=["leads"])
 lead_store = LeadStore()
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# Simple in-memory rate limiter: max 5 POST /leads per IP per 60 seconds
+_rate_limit_window = 60
+_rate_limit_max = 5
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
 
 
 class LeadCreateRequest(BaseModel):
@@ -32,8 +39,24 @@ class LeadCreateRequest(BaseModel):
         return normalized
 
 
+def _is_rate_limited(client_ip: str) -> bool:
+    now = time.monotonic()
+    timestamps = _rate_limit_store[client_ip]
+    _rate_limit_store[client_ip] = [t for t in timestamps if now - t < _rate_limit_window]
+    if len(_rate_limit_store[client_ip]) >= _rate_limit_max:
+        return True
+    _rate_limit_store[client_ip].append(now)
+    return False
+
+
 @router.post("/leads")
-def create_lead(request: LeadCreateRequest) -> JSONResponse:
+def create_lead(request: LeadCreateRequest, raw_request: Request) -> JSONResponse:
+    client_ip = raw_request.client.host if raw_request.client else "unknown"
+    if _is_rate_limited(client_ip):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests, please try again later"},
+        )
     if lead_store.lead_exists(request.email, request.type):
         return JSONResponse(
             status_code=200,
