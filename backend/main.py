@@ -31,7 +31,7 @@ def health_check() -> dict[str, str]:
 app.include_router(translate_router)
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def serve_frontend_index() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
 

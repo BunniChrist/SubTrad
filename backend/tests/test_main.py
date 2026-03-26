@@ -14,6 +14,13 @@ def test_root_serves_frontend_index() -> None:
     assert "SubTrad" in response.text
 
 
+def test_root_head_returns_frontend_headers() -> None:
+    response = client.head("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+
+
 def test_frontend_css_asset_is_served() -> None:
     response = client.get("/css/style.css")
 
