@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -15,6 +17,7 @@ class SubtitleEntry(BaseModel):
 class TranslateResponse(BaseModel):
     platform: str
     video_id: str
-    subtitles: list[SubtitleEntry | dict[str, str]]
+    subtitles: list[SubtitleEntry | dict[str, Any]]
     duration_seconds: int
     needs_transcription: bool = False
+    source: str
