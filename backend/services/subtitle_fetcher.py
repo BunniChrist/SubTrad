@@ -39,6 +39,7 @@ def fetch_existing_subtitles(
         "writeautomaticsub": True,
         "quiet": True,
         "no_warnings": True,
+        "ignore_no_formats_error": True,
     }
     if proxy:
         options["proxy"] = proxy
@@ -62,7 +63,16 @@ def fetch_existing_subtitles(
                 if track.get("ext") != "srt":
                     continue
                 subtitle_url = track.get("url")
-                if subtitle_url:
-                    return [{"start": "00:00:00,000", "end": "00:00:00,000", "text": subtitle_url}]
+                if not subtitle_url:
+                    continue
+                try:
+                    import httpx
+                    resp = httpx.get(subtitle_url, timeout=15)
+                    if resp.status_code == 200 and resp.text.strip():
+                        segments = parse_srt(resp.text)
+                        if segments:
+                            return segments
+                except Exception:
+                    continue
 
     return None
