@@ -1,4 +1,4 @@
-from backend.services.subtitle_fetcher import parse_srt
+from backend.services.subtitle_fetcher import fetch_existing_subtitles, parse_srt
 
 
 def test_parse_srt_returns_structured_entries() -> None:
@@ -35,3 +35,40 @@ le monde
             "text": "Bonjour le monde",
         }
     ]
+
+
+def test_fetch_existing_subtitles_passes_cookie_file_and_proxy(monkeypatch) -> None:
+    captured_options: dict[str, object] = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            return {
+                "automatic_captions": {
+                    "en": [{"ext": "srt", "url": "https://example.com/captions.srt"}]
+                }
+            }
+
+    monkeypatch.setattr("backend.services.subtitle_fetcher.YoutubeDL", FakeYoutubeDL)
+
+    result = fetch_existing_subtitles(
+        "https://www.youtube.com/watch?v=abc123",
+        proxy="http://proxy.test",
+        cookie_file="/tmp/cookies.txt",
+    )
+
+    assert result == [{
+        "start": "00:00:00,000",
+        "end": "00:00:00,000",
+        "text": "https://example.com/captions.srt",
+    }]
+    assert captured_options["proxy"] == "http://proxy.test"
+    assert captured_options["cookiefile"] == "/tmp/cookies.txt"

@@ -167,7 +167,7 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "fetch_captions_via_api",
-        lambda video_id, target_lang, api_key: [
+        lambda video_id, target_lang, api_key, **kwargs: [
             {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
         ],
     )
@@ -200,6 +200,70 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
         "target_lang": "fr",
         "detected_language": "en",
         "translation_status": "translated",
+    }
+
+
+def test_handle_youtube_passes_cookie_file_and_proxy_to_caption_fetch(monkeypatch, tmp_path) -> None:
+    from backend.routers import translate
+
+    captured_call: dict[str, object] = {}
+    cookie_file = tmp_path / "yt_cookies.txt"
+    cookie_file.write_text("youtube-cookie")
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+
+    monkeypatch.setattr(
+        translate,
+        "YOUTUBE_COOKIE_FILE",
+        cookie_file,
+    )
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Test"},
+    )
+
+    def fake_fetch_captions(video_id, target_lang, api_key, proxy="", cookie_file=None):
+        captured_call.update({
+            "video_id": video_id,
+            "target_lang": target_lang,
+            "api_key": api_key,
+            "proxy": proxy,
+            "cookie_file": cookie_file,
+        })
+        return [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}]
+
+    monkeypatch.setattr(translate, "fetch_captions_via_api", fake_fetch_captions)
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": subtitles,
+            "detected_language": "en",
+            "translation_status": "translated",
+        },
+    )
+    settings = translate.get_settings().model_copy(
+        update={
+            "youtube_api_key": "test-youtube-api-key",
+            "proxy_url": "http://proxy.test",
+        }
+    )
+    response = translate._handle_youtube(
+        video_id="dQw4w9WgXcQ",
+        target_lang="fr",
+        settings=settings,
+        cache=FakeSubtitleCache("data/test-cache.db"),
+        counter=FakeRequestCounter("data/test-cache.db", threshold=100),
+    )
+
+    assert response.video_id == "dQw4w9WgXcQ"
+    assert captured_call == {
+        "video_id": "dQw4w9WgXcQ",
+        "target_lang": "fr",
+        "api_key": "test-youtube-api-key",
+        "proxy": "http://proxy.test",
+        "cookie_file": str(cookie_file),
     }
 
 
@@ -315,7 +379,7 @@ def test_translate_returns_skipped_status_when_source_matches_target(monkeypatch
     monkeypatch.setattr(
         translate,
         "fetch_captions_via_api",
-        lambda video_id, target_lang, api_key: [
+        lambda video_id, target_lang, api_key, **kwargs: [
             {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
         ],
     )
@@ -356,7 +420,7 @@ def test_translate_returns_original_subtitles_with_warning_when_translation_fail
     monkeypatch.setattr(
         translate,
         "fetch_captions_via_api",
-        lambda video_id, target_lang, api_key: original_subtitles,
+        lambda video_id, target_lang, api_key, **kwargs: original_subtitles,
     )
     monkeypatch.setattr(
         translate,
@@ -407,7 +471,7 @@ def test_translate_processes_normally_before_cache_threshold(monkeypatch) -> Non
     monkeypatch.setattr(
         translate,
         "fetch_captions_via_api",
-        lambda video_id, target_lang, api_key: [
+        lambda video_id, target_lang, api_key, **kwargs: [
             {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
         ],
     )
@@ -466,7 +530,7 @@ def test_translate_returns_cached_response_after_threshold(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "fetch_captions_via_api",
-        lambda video_id, target_lang, api_key: [
+        lambda video_id, target_lang, api_key, **kwargs: [
             {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
         ],
     )
@@ -540,7 +604,7 @@ def test_youtube_uses_api_for_duration_and_captions(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "fetch_captions_via_api",
-        lambda video_id, target_lang, api_key: [
+        lambda video_id, target_lang, api_key, **kwargs: [
             {"start": "1.000", "end": "3.000", "text": "Bonjour"}
         ],
     )
@@ -582,7 +646,7 @@ def test_youtube_no_captions_returns_premium_redirect(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "fetch_captions_via_api",
-        lambda video_id, target_lang, api_key: None,
+        lambda video_id, target_lang, api_key, **kwargs: None,
     )
 
     response = client.post(

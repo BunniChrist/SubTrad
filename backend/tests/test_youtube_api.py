@@ -183,6 +183,84 @@ def test_fetch_captions_returns_none_when_no_tracks(monkeypatch) -> None:
     assert result is None
 
 
+def test_fetch_captions_tries_asr_timedtext_when_caption_list_is_empty(monkeypatch) -> None:
+    captions_response = {"items": []}
+    video_response = {
+        "items": [{
+            "contentDetails": {"duration": "PT30S"},
+            "snippet": {
+                "title": "Short",
+                "defaultAudioLanguage": "es-ES",
+            },
+        }]
+    }
+    asr_xml = """<?xml version="1.0" encoding="utf-8" ?>
+<transcript>
+    <text start="0.0" dur="1.0">Hola</text>
+</transcript>"""
+    timedtext_calls: list[dict[str, str]] = []
+
+    def fake_get(url, **kwargs):
+        params = kwargs.get("params", {})
+        if "googleapis.com/youtube/v3/captions" in url:
+            return httpx.Response(200, json=captions_response)
+        if "googleapis.com/youtube/v3/videos" in url:
+            return httpx.Response(200, json=video_response)
+        if "timedtext" in url:
+            timedtext_calls.append(dict(params))
+            if params == {"v": "abc123", "lang": "es", "fmt": "srv3", "kind": "asr"}:
+                return httpx.Response(200, text=asr_xml)
+            return httpx.Response(200, text="")
+        return httpx.Response(404)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = fetch_captions("abc123", "fr", "fake-api-key")
+
+    assert result == [{"start": "0.000", "end": "1.000", "text": "Hola"}]
+    assert timedtext_calls[0] == {
+        "v": "abc123",
+        "lang": "es",
+        "fmt": "srv3",
+        "kind": "asr",
+    }
+
+
+def test_fetch_captions_retries_timedtext_with_asr_kind_when_standard_is_empty(monkeypatch) -> None:
+    captions_response = {
+        "items": [
+            {"snippet": {"language": "en", "trackKind": "standard"}},
+        ]
+    }
+    asr_xml = """<?xml version="1.0" encoding="utf-8" ?>
+<transcript>
+    <text start="2.0" dur="1.0">Generated</text>
+</transcript>"""
+    timedtext_calls: list[dict[str, str]] = []
+
+    def fake_get(url, **kwargs):
+        params = kwargs.get("params", {})
+        if "googleapis.com" in url:
+            return httpx.Response(200, json=captions_response)
+        if "timedtext" in url:
+            timedtext_calls.append(dict(params))
+            if params == {"v": "abc123", "lang": "en", "fmt": "srv3"}:
+                return httpx.Response(200, text="")
+            if params == {"v": "abc123", "lang": "en", "fmt": "srv3", "kind": "asr"}:
+                return httpx.Response(200, text=asr_xml)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = fetch_captions("abc123", "en", "fake-api-key")
+
+    assert result == [{"start": "2.000", "end": "3.000", "text": "Generated"}]
+    assert timedtext_calls == [
+        {"v": "abc123", "lang": "en", "fmt": "srv3"},
+        {"v": "abc123", "lang": "en", "fmt": "srv3", "kind": "asr"},
+    ]
+
+
 def test_fetch_captions_falls_back_to_ytdlp_on_timedtext_failure(monkeypatch) -> None:
     captions_response = {
         "items": [
@@ -205,8 +283,56 @@ def test_fetch_captions_falls_back_to_ytdlp_on_timedtext_failure(monkeypatch) ->
     monkeypatch.setattr(
         youtube_api,
         "fetch_existing_subtitles",
-        lambda url, proxy="": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Fallback"}],
+        lambda url, proxy="", cookie_file=None: [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Fallback"}],
     )
 
     result = fetch_captions("abc123", "en", "fake-api-key")
     assert result == [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Fallback"}]
+
+
+def test_fetch_captions_passes_proxy_and_cookie_file_to_ytdlp_fallback(monkeypatch) -> None:
+    captions_response = {
+        "items": [
+            {"snippet": {"language": "en", "trackKind": "standard"}},
+        ]
+    }
+    fallback_calls: list[dict[str, object]] = []
+
+    def fake_get(url, **kwargs):
+        if "googleapis.com" in url:
+            return httpx.Response(200, json=captions_response)
+        if "timedtext" in url:
+            return httpx.Response(404)
+        return httpx.Response(404)
+
+    def fake_fetch_existing_subtitles(url: str, proxy: str = "", cookie_file=None):
+        fallback_calls.append({
+            "url": url,
+            "proxy": proxy,
+            "cookie_file": cookie_file,
+        })
+        return [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Fallback"}]
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    from backend.services import youtube_api
+
+    monkeypatch.setattr(
+        youtube_api,
+        "fetch_existing_subtitles",
+        fake_fetch_existing_subtitles,
+    )
+
+    result = fetch_captions(
+        "abc123",
+        "en",
+        "fake-api-key",
+        proxy="http://proxy.test",
+        cookie_file="/tmp/cookies.txt",
+    )
+
+    assert result == [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Fallback"}]
+    assert fallback_calls == [{
+        "url": "https://www.youtube.com/watch?v=abc123",
+        "proxy": "http://proxy.test",
+        "cookie_file": "/tmp/cookies.txt",
+    }]

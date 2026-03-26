@@ -167,7 +167,13 @@ def _handle_youtube(
             },
         )
 
-    subtitles = fetch_captions_via_api(video_id, target_lang, settings.youtube_api_key)
+    subtitles = fetch_captions_via_api(
+        video_id,
+        target_lang,
+        settings.youtube_api_key,
+        proxy=settings.proxy_url,
+        cookie_file=str(YOUTUBE_COOKIE_FILE) if YOUTUBE_COOKIE_FILE.exists() else None,
+    )
 
     if subtitles is None:
         return JSONResponse(

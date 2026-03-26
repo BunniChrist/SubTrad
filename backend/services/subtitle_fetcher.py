@@ -28,7 +28,11 @@ def parse_srt(srt_content: str) -> list[dict[str, str]]:
     return entries
 
 
-def fetch_existing_subtitles(url: str, proxy: str = "") -> list[dict[str, str]] | None:
+def fetch_existing_subtitles(
+    url: str,
+    proxy: str = "",
+    cookie_file: str | None = None,
+) -> list[dict[str, str]] | None:
     options = {
         "skip_download": True,
         "writesubtitles": True,
@@ -38,6 +42,8 @@ def fetch_existing_subtitles(url: str, proxy: str = "") -> list[dict[str, str]] 
     }
     if proxy:
         options["proxy"] = proxy
+    if cookie_file:
+        options["cookiefile"] = cookie_file
 
     try:
         with YoutubeDL(options) as ydl:
