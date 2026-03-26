@@ -1,0 +1,212 @@
+import pytest
+import httpx
+
+from backend.services.youtube_api import (
+    parse_iso8601_duration,
+    get_video_info,
+    fetch_captions,
+    parse_timedtext_xml,
+)
+
+
+# --- ISO 8601 Duration Parsing ---
+
+def test_parse_iso8601_duration_minutes_and_seconds() -> None:
+    assert parse_iso8601_duration("PT1M30S") == 90
+
+
+def test_parse_iso8601_duration_hours_minutes_seconds() -> None:
+    assert parse_iso8601_duration("PT1H2M30S") == 3750
+
+
+def test_parse_iso8601_duration_seconds_only() -> None:
+    assert parse_iso8601_duration("PT45S") == 45
+
+
+def test_parse_iso8601_duration_minutes_only() -> None:
+    assert parse_iso8601_duration("PT5M") == 300
+
+
+def test_parse_iso8601_duration_hours_only() -> None:
+    assert parse_iso8601_duration("PT2H") == 7200
+
+
+def test_parse_iso8601_duration_zero() -> None:
+    assert parse_iso8601_duration("PT0S") == 0
+
+
+def test_parse_iso8601_duration_invalid_returns_zero() -> None:
+    assert parse_iso8601_duration("invalid") == 0
+
+
+# --- Timedtext XML Parsing ---
+
+def test_parse_timedtext_xml_returns_segments() -> None:
+    xml_content = """<?xml version="1.0" encoding="utf-8" ?>
+<transcript>
+    <text start="0.5" dur="1.2">Hello world</text>
+    <text start="2.0" dur="1.5">How are you</text>
+</transcript>"""
+    result = parse_timedtext_xml(xml_content)
+    assert result == [
+        {"start": "0.500", "end": "1.700", "text": "Hello world"},
+        {"start": "2.000", "end": "3.500", "text": "How are you"},
+    ]
+
+
+def test_parse_timedtext_xml_empty_returns_empty() -> None:
+    xml_content = """<?xml version="1.0" encoding="utf-8" ?>
+<transcript></transcript>"""
+    assert parse_timedtext_xml(xml_content) == []
+
+
+def test_parse_timedtext_xml_handles_html_entities() -> None:
+    xml_content = """<?xml version="1.0" encoding="utf-8" ?>
+<transcript>
+    <text start="1.0" dur="2.0">Tom &amp; Jerry</text>
+</transcript>"""
+    result = parse_timedtext_xml(xml_content)
+    assert result[0]["text"] == "Tom & Jerry"
+
+
+# --- get_video_info (mocked HTTP) ---
+
+def test_get_video_info_returns_duration_and_captions(monkeypatch) -> None:
+    api_response = {
+        "items": [{
+            "contentDetails": {"duration": "PT3M45S"},
+            "snippet": {"title": "Test Video"},
+        }]
+    }
+
+    def fake_get(url, **kwargs):
+        resp = httpx.Response(200, json=api_response)
+        return resp
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    info = get_video_info("abc123", "fake-api-key")
+    assert info["duration_seconds"] == 225
+    assert info["title"] == "Test Video"
+
+
+def test_get_video_info_returns_none_for_missing_video(monkeypatch) -> None:
+    api_response = {"items": []}
+
+    def fake_get(url, **kwargs):
+        return httpx.Response(200, json=api_response)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    info = get_video_info("nonexistent", "fake-api-key")
+    assert info is None
+
+
+def test_get_video_info_raises_on_api_error(monkeypatch) -> None:
+    def fake_get(url, **kwargs):
+        return httpx.Response(403, json={"error": {"message": "Forbidden"}})
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    with pytest.raises(RuntimeError, match="YouTube API error"):
+        get_video_info("abc123", "fake-api-key")
+
+
+# --- fetch_captions (mocked HTTP) ---
+
+def test_fetch_captions_returns_subtitles_from_timedtext(monkeypatch) -> None:
+    captions_response = {
+        "items": [
+            {"snippet": {"language": "en", "trackKind": "standard"}},
+            {"snippet": {"language": "fr", "trackKind": "standard"}},
+        ]
+    }
+
+    timedtext_xml = """<?xml version="1.0" encoding="utf-8" ?>
+<transcript>
+    <text start="1.0" dur="2.0">Bonjour</text>
+</transcript>"""
+
+    call_log = []
+
+    def fake_get(url, **kwargs):
+        call_log.append(url)
+        if "googleapis.com" in url:
+            return httpx.Response(200, json=captions_response)
+        if "timedtext" in url:
+            return httpx.Response(200, text=timedtext_xml)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = fetch_captions("abc123", "fr", "fake-api-key")
+    assert result == [{"start": "1.000", "end": "3.000", "text": "Bonjour"}]
+
+
+def test_fetch_captions_falls_back_to_any_language_when_target_missing(monkeypatch) -> None:
+    captions_response = {
+        "items": [
+            {"snippet": {"language": "en", "trackKind": "standard"}},
+        ]
+    }
+
+    timedtext_xml = """<?xml version="1.0" encoding="utf-8" ?>
+<transcript>
+    <text start="0.0" dur="1.0">Hello</text>
+</transcript>"""
+
+    def fake_get(url, **kwargs):
+        if "googleapis.com" in url:
+            return httpx.Response(200, json=captions_response)
+        if "timedtext" in url:
+            return httpx.Response(200, text=timedtext_xml)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = fetch_captions("abc123", "ja", "fake-api-key")
+    assert result is not None
+    assert result[0]["text"] == "Hello"
+
+
+def test_fetch_captions_returns_none_when_no_tracks(monkeypatch) -> None:
+    captions_response = {"items": []}
+
+    def fake_get(url, **kwargs):
+        if "googleapis.com" in url:
+            return httpx.Response(200, json=captions_response)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    result = fetch_captions("abc123", "fr", "fake-api-key")
+    assert result is None
+
+
+def test_fetch_captions_falls_back_to_ytdlp_on_timedtext_failure(monkeypatch) -> None:
+    captions_response = {
+        "items": [
+            {"snippet": {"language": "en", "trackKind": "standard"}},
+        ]
+    }
+
+    def fake_get(url, **kwargs):
+        if "googleapis.com" in url:
+            return httpx.Response(200, json=captions_response)
+        if "timedtext" in url:
+            return httpx.Response(404)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    # Mock the yt-dlp fallback
+    from backend.services import youtube_api
+
+    monkeypatch.setattr(
+        youtube_api,
+        "fetch_existing_subtitles",
+        lambda url, proxy="": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Fallback"}],
+    )
+
+    result = fetch_captions("abc123", "en", "fake-api-key")
+    assert result == [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Fallback"}]
