@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SubTrad Suggestions</title>
+    <meta
+      name="description"
+      content="Share product suggestions with the SubTrad team and join the mailing list for updates."
+    />
+    <link rel="stylesheet" href="/css/style.css" />
+    <script src="/js/leads.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell marketing-shell">
+      <header class="page-topbar">
+        <a class="brand-mark brand-link" href="/">SubTrad</a>
+        <nav class="page-nav" aria-label="Primary">
+          <a href="/">Home</a>
+          <a href="/premium.html">Premium</a>
+        </nav>
+      </header>
+
+      <section class="hero marketing-hero suggestion-hero">
+        <div>
+          <p class="section-eyebrow">Feedback</p>
+          <h1>Help us improve SubTrad.</h1>
+          <p class="hero-copy">
+            Tell us what would make translated video playback more useful. Every
+            suggestion helps shape the next release.
+          </p>
+        </div>
+
+        <section class="lead-card" aria-labelledby="suggestions-heading">
+          <h2 id="suggestions-heading">Send suggestion</h2>
+          <form
+            id="lead-form"
+            class="lead-form"
+            data-lead-form
+            data-lead-type="suggestion"
+            novalidate
+          >
+            <label class="field-label" for="lead-email">Email</label>
+            <input
+              id="lead-email"
+              name="email"
+              type="email"
+              placeholder="you@example.com"
+              autocomplete="email"
+              required
+            />
+
+            <label class="field-label" for="lead-message">Suggestion</label>
+            <textarea
+              id="lead-message"
+              name="message"
+              rows="6"
+              placeholder="What should SubTrad add or improve next?"
+              required
+            ></textarea>
+
+            <button id="lead-submit" type="submit">Send suggestion</button>
+          </form>
+
+          <p id="lead-feedback" class="message hidden" role="status"></p>
+        </section>
+      </section>
+
+      <footer class="site-footer">
+        <a href="/">Home</a>
+        <a href="/premium.html">Premium</a>
+        <a href="#">Legal</a>
+      </footer>
+    </main>
+  </body>
+</html>
