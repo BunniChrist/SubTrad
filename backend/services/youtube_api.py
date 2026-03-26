@@ -77,15 +77,24 @@ def get_video_info(video_id: str, api_key: str) -> dict | None:
     item = items[0]
     duration_str = item["contentDetails"]["duration"]
     title = item["snippet"].get("title", "")
+    default_audio_language = (
+        item["snippet"].get("defaultAudioLanguage")
+        or item["snippet"].get("defaultLanguage")
+    )
 
     return {
         "duration_seconds": parse_iso8601_duration(duration_str),
         "title": title,
+        "default_audio_language": default_audio_language,
     }
 
 
 def fetch_captions(
-    video_id: str, target_lang: str, api_key: str
+    video_id: str,
+    target_lang: str,
+    api_key: str,
+    proxy: str = "",
+    cookie_file: str | None = None,
 ) -> list[dict[str, str]] | None:
     """Fetch captions for a YouTube video.
 
@@ -110,22 +119,80 @@ def fetch_captions(
     data = response.json()
     tracks = data.get("items", [])
     if not tracks:
-        return None
+        for language in _build_asr_language_candidates(video_id, target_lang, api_key):
+            segments = _fetch_timedtext_segments(video_id, language, asr=True)
+            if segments:
+                return segments
+        youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+        return fetch_existing_subtitles(
+            youtube_url,
+            proxy=proxy,
+            cookie_file=cookie_file,
+        )
 
     # Step 2: Pick the best track (prefer target_lang, then any available)
     languages = [t["snippet"]["language"] for t in tracks]
     chosen_lang = target_lang if target_lang in languages else languages[0]
 
     # Step 3: Try timedtext endpoint
-    timedtext_url = TIMEDTEXT_BASE
-    timedtext_params = {"v": video_id, "lang": chosen_lang, "fmt": "srv3"}
-    tt_response = httpx.get(timedtext_url, params=timedtext_params, timeout=10)
+    segments = _fetch_timedtext_segments(video_id, chosen_lang)
+    if segments:
+        return segments
 
-    if tt_response.status_code == 200 and tt_response.text.strip():
-        segments = parse_timedtext_xml(tt_response.text)
-        if segments:
-            return segments
+    segments = _fetch_timedtext_segments(video_id, chosen_lang, asr=True)
+    if segments:
+        return segments
 
     # Step 4: Fall back to yt-dlp
     youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-    return fetch_existing_subtitles(youtube_url)
+    return fetch_existing_subtitles(
+        youtube_url,
+        proxy=proxy,
+        cookie_file=cookie_file,
+    )
+
+
+def _normalize_language(language: str | None) -> str | None:
+    if not language:
+        return None
+    return language.split("-")[0].strip().lower() or None
+
+
+def _build_asr_language_candidates(
+    video_id: str,
+    target_lang: str,
+    api_key: str,
+) -> list[str]:
+    candidates: list[str] = []
+
+    try:
+        info = get_video_info(video_id, api_key)
+    except RuntimeError:
+        info = None
+
+    for language in (
+        _normalize_language((info or {}).get("default_audio_language")),
+        "en",
+        _normalize_language(target_lang),
+    ):
+        if language and language not in candidates:
+            candidates.append(language)
+
+    return candidates
+
+
+def _fetch_timedtext_segments(
+    video_id: str,
+    language: str,
+    *,
+    asr: bool = False,
+) -> list[dict[str, str]]:
+    timedtext_params = {"v": video_id, "lang": language, "fmt": "srv3"}
+    if asr:
+        timedtext_params["kind"] = "asr"
+
+    tt_response = httpx.get(TIMEDTEXT_BASE, params=timedtext_params, timeout=10)
+    if tt_response.status_code != 200 or not tt_response.text.strip():
+        return []
+
+    return parse_timedtext_xml(tt_response.text)
