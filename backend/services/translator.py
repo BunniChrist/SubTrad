@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from openai import OpenAI
 
 from backend.services.translation_prompts import (
-    LANGUAGE_NAMES,
     SYSTEM_PROMPT,
     get_translation_prompt,
     parse_translation_response,
 )
+
+
+@dataclass
+class TranslationResult:
+    segments: list[dict[str, float | str]]
+    detected_language: str | None
+    translation_status: str
 
 
 def detect_source_language(
@@ -56,15 +64,38 @@ def translate_subtitles(
     api_key: str,
     source_lang: str | None = None,
 ) -> list[dict[str, float | str]]:
+    return translate_subtitles_with_metadata(
+        segments,
+        target_lang,
+        api_key,
+        source_lang=source_lang,
+    ).segments
+
+
+def translate_subtitles_with_metadata(
+    segments: list[dict[str, float | str]],
+    target_lang: str,
+    api_key: str,
+    source_lang: str | None = None,
+) -> TranslationResult:
     if not segments:
-        return []
+        return TranslationResult(
+            segments=[],
+            detected_language=source_lang,
+            translation_status="translated",
+        )
 
     detected_source = source_lang or detect_source_language(segments, api_key)
     if detected_source == target_lang:
-        return list(segments)
+        return TranslationResult(
+            segments=list(segments),
+            detected_language=detected_source,
+            translation_status="skipped_same_lang",
+        )
 
     client = OpenAI(api_key=api_key)
     translated_segments: list[dict[str, float | str]] = []
+    had_failure = False
 
     for start_index in range(0, len(segments), 20):
         batch = segments[start_index : start_index + 20]
@@ -93,10 +124,15 @@ def translate_subtitles(
             )
         except Exception:
             translated_batch = list(batch)
+            had_failure = True
 
         translated_segments.extend(translated_batch)
 
-    return translated_segments
+    return TranslationResult(
+        segments=translated_segments,
+        detected_language=detected_source,
+        translation_status="failed_fallback_original" if had_failure else "translated",
+    )
 
 
 def _build_batch_prompt(

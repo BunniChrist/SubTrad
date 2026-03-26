@@ -80,6 +80,7 @@ def test_translate_returns_clear_error_when_metadata_lookup_fails(monkeypatch) -
 def test_translate_returns_existing_subtitles(monkeypatch) -> None:
     from backend.routers import translate
 
+    subtitles = [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}]
     monkeypatch.setattr(
         translate,
         "fetch_video_duration_seconds",
@@ -88,7 +89,16 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "fetch_existing_subtitles",
-        lambda url: [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Bonjour"}],
+        lambda url: subtitles,
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Bonjour"}],
+            "detected_language": "en",
+            "translation_status": "translated",
+        },
     )
 
     response = client.post(
@@ -107,6 +117,9 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
         "duration_seconds": 120,
         "needs_transcription": False,
         "source": "existing_captions",
+        "target_lang": "fr",
+        "detected_language": "en",
+        "translation_status": "translated",
     }
 
 
@@ -130,10 +143,20 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
     )
     monkeypatch.setattr(
         translate,
-        "transcribe_audio",
-        lambda audio_path, api_key: [
-            {"start": 0.0, "end": 1.5, "text": "Bonjour le monde"}
-        ],
+        "transcribe_audio_with_metadata",
+        lambda audio_path, api_key: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello world"}],
+            "language": "en",
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour le monde"}],
+            "detected_language": source_lang,
+            "translation_status": "translated",
+        },
     )
     cleanup_calls: list[str] = []
     monkeypatch.setattr(
@@ -158,6 +181,9 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
         "duration_seconds": 120,
         "needs_transcription": True,
         "source": "whisper_transcription",
+        "target_lang": "ja",
+        "detected_language": "en",
+        "translation_status": "translated",
     }
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 
@@ -179,10 +205,14 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
         lambda audio_path: cleanup_calls.append(audio_path),
     )
 
-    def raise_transcription_error(audio_path: str, api_key: str) -> list[dict]:
+    def raise_transcription_error(audio_path: str, api_key: str) -> dict[str, object]:
         raise RuntimeError("Whisper API unavailable")
 
-    monkeypatch.setattr(translate, "transcribe_audio", raise_transcription_error)
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        raise_transcription_error,
+    )
 
     response = client.post(
         "/api/translate",
@@ -198,3 +228,66 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
         "error": "Whisper API unavailable",
     }
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
+
+
+def test_translate_returns_skipped_status_when_source_matches_target(monkeypatch) -> None:
+    from backend.routers import translate
+
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url: 120)
+    monkeypatch.setattr(
+        translate,
+        "fetch_existing_subtitles",
+        lambda url: [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}],
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": subtitles,
+            "detected_language": "en",
+            "translation_status": "skipped_same_lang",
+        },
+    )
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "target_lang": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["translation_status"] == "skipped_same_lang"
+    assert response.json()["detected_language"] == "en"
+
+
+def test_translate_returns_original_subtitles_with_warning_when_translation_fails(
+    monkeypatch,
+) -> None:
+    from backend.routers import translate
+
+    original_subtitles = [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}]
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url: 120)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url: original_subtitles)
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": subtitles,
+            "detected_language": "en",
+            "translation_status": "failed_fallback_original",
+        },
+    )
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["subtitles"] == original_subtitles
+    assert response.json()["translation_status"] == "failed_fallback_original"

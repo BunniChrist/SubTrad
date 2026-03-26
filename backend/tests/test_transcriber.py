@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.services.transcriber import transcribe_audio
+from backend.services.transcriber import transcribe_audio, transcribe_audio_with_metadata
 
 
 class FakeSegment:
@@ -15,6 +15,7 @@ class FakeSegment:
 class FakeResponse:
     def __init__(self, segments: list[FakeSegment]) -> None:
         self.segments = segments
+        self.language = "fr"
 
 
 class FakeClient:
@@ -65,6 +66,27 @@ def test_transcribe_audio_returns_float_timestamps(monkeypatch, tmp_path) -> Non
 
     assert isinstance(segments[0]["start"], float)
     assert isinstance(segments[0]["end"], float)
+
+
+def test_transcribe_audio_with_metadata_returns_detected_language(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from backend.services import transcriber
+
+    audio_file = tmp_path / "audio.mp3"
+    audio_file.write_bytes(b"fake-audio")
+    monkeypatch.setattr(transcriber, "OpenAI", FakeClient)
+
+    payload = transcribe_audio_with_metadata(str(audio_file), "test-api-key")
+
+    assert payload == {
+        "segments": [
+            {"start": 0.0, "end": 1.25, "text": "Bonjour"},
+            {"start": 1.25, "end": 2.5, "text": "le monde"},
+        ],
+        "language": "fr",
+    }
 
 
 @pytest.mark.integration

@@ -12,7 +12,8 @@ try:
     from backend.services.audio_extractor import cleanup_audio, extract_audio
     from backend.services.duration_checker import check_duration
     from backend.services.subtitle_fetcher import fetch_existing_subtitles
-    from backend.services.transcriber import transcribe_audio
+    from backend.services.transcriber import transcribe_audio_with_metadata
+    from backend.services.translator import translate_subtitles_with_metadata
     from backend.services.url_validator import detect_platform, validate_url
     from backend.services.video_id import extract_video_id
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
@@ -21,7 +22,8 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
     from services.audio_extractor import cleanup_audio, extract_audio
     from services.duration_checker import check_duration
     from services.subtitle_fetcher import fetch_existing_subtitles
-    from services.transcriber import transcribe_audio
+    from services.transcriber import transcribe_audio_with_metadata
+    from services.translator import translate_subtitles_with_metadata
     from services.url_validator import detect_platform, validate_url
     from services.video_id import extract_video_id
 
@@ -83,19 +85,36 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
 
     subtitles = fetch_existing_subtitles(request.url)
     if subtitles is not None:
+        translation_result = translate_subtitles_with_metadata(
+            subtitles,
+            request.target_lang,
+            settings.openai_api_key,
+        )
         return TranslateResponse(
             platform=platform,
             video_id=video_id,
-            subtitles=subtitles,
+            subtitles=translation_result["segments"]
+            if isinstance(translation_result, dict)
+            else translation_result.segments,
             duration_seconds=duration_result.duration_seconds,
             needs_transcription=False,
             source="existing_captions",
+            target_lang=request.target_lang,
+            detected_language=translation_result["detected_language"]
+            if isinstance(translation_result, dict)
+            else translation_result.detected_language,
+            translation_status=translation_result["translation_status"]
+            if isinstance(translation_result, dict)
+            else translation_result.translation_status,
         )
 
     audio_path = ""
     try:
         audio_path = extract_audio(request.url, video_id)
-        transcribed_segments = transcribe_audio(audio_path, settings.openai_api_key)
+        transcription_result = transcribe_audio_with_metadata(
+            audio_path,
+            settings.openai_api_key,
+        )
     except Exception as exc:
         return JSONResponse(
             status_code=502,
@@ -108,11 +127,27 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
         if audio_path:
             cleanup_audio(audio_path)
 
+    translation_result = translate_subtitles_with_metadata(
+        transcription_result["segments"],
+        request.target_lang,
+        settings.openai_api_key,
+        source_lang=transcription_result.get("language"),
+    )
+
     return TranslateResponse(
         platform=platform,
         video_id=video_id,
-        subtitles=transcribed_segments,
+        subtitles=translation_result["segments"]
+        if isinstance(translation_result, dict)
+        else translation_result.segments,
         duration_seconds=duration_result.duration_seconds,
         needs_transcription=True,
         source="whisper_transcription",
+        target_lang=request.target_lang,
+        detected_language=translation_result["detected_language"]
+        if isinstance(translation_result, dict)
+        else translation_result.detected_language,
+        translation_status=translation_result["translation_status"]
+        if isinstance(translation_result, dict)
+        else translation_result.translation_status,
     )
