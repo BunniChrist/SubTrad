@@ -33,7 +33,7 @@ def test_legal_page_is_served() -> None:
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "SubTrad - Informations legales" in response.text
+    assert "SubTrad - Informations légales" in response.text
 
 
 def test_health_endpoint_returns_ok_status() -> None:
