@@ -6,6 +6,34 @@ from backend.main import app
 client = TestClient(app)
 
 
+def test_fetch_video_duration_seconds_ignores_missing_formats(monkeypatch) -> None:
+    from backend.routers import translate
+
+    captured_options: dict[str, object] = {}
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def extract_info(self, url: str, download: bool = False) -> dict[str, object]:
+            return {"duration": 213}
+
+    monkeypatch.setattr(translate, "YoutubeDL", FakeYoutubeDL)
+
+    duration = translate.fetch_video_duration_seconds(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
+
+    assert duration == 213
+    assert captured_options["ignore_no_formats_error"] is True
+
+
 def test_translate_rejects_invalid_urls() -> None:
     response = client.post(
         "/api/translate",

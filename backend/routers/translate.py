@@ -37,6 +37,7 @@ def fetch_video_duration_seconds(url: str) -> int:
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
+        "ignore_no_formats_error": True,
     }
     if YOUTUBE_COOKIE_FILE.exists():
         options["cookiefile"] = str(YOUTUBE_COOKIE_FILE)

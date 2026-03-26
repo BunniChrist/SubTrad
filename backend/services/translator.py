@@ -4,11 +4,18 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
-from backend.services.translation_prompts import (
-    SYSTEM_PROMPT,
-    get_translation_prompt,
-    parse_translation_response,
-)
+try:
+    from backend.services.translation_prompts import (
+        SYSTEM_PROMPT,
+        get_translation_prompt,
+        parse_translation_response,
+    )
+except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
+    from services.translation_prompts import (
+        SYSTEM_PROMPT,
+        get_translation_prompt,
+        parse_translation_response,
+    )
 
 
 @dataclass
