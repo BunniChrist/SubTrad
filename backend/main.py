@@ -26,8 +26,17 @@ app.add_middleware(
 
 
 @app.get("/api/health")
-def health_check() -> dict[str, str]:
-    return {"status": "ok"}
+def health_check() -> dict:
+    try:
+        from config import get_settings
+    except ModuleNotFoundError:
+        from backend.config import get_settings
+    s = get_settings()
+    return {
+        "status": "ok",
+        "yt_key_len": len(s.youtube_api_key),
+        "yt_key_prefix": s.youtube_api_key[:8] if s.youtube_api_key else "EMPTY",
+    }
 
 
 app.include_router(translate_router)
