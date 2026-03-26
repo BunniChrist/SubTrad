@@ -171,7 +171,7 @@ def _handle_youtube(
         video_id,
         target_lang,
         settings.youtube_api_key,
-        proxy=settings.proxy_url,
+        proxy=settings.warp_proxy_url or settings.proxy_url,
         cookie_file=str(YOUTUBE_COOKIE_FILE) if YOUTUBE_COOKIE_FILE.exists() else None,
     )
 
