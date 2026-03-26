@@ -37,7 +37,7 @@ def test_transcribe_audio_parses_whisper_segments(monkeypatch, tmp_path) -> None
     from backend.services import transcriber
 
     audio_file = tmp_path / "audio.mp3"
-    audio_file.write_bytes(b"fake-audio")
+    audio_file.write_bytes(b"fake-audio" * 256)
     monkeypatch.setattr(transcriber, "OpenAI", FakeClient)
 
     segments = transcribe_audio(str(audio_file), "test-api-key")
@@ -55,11 +55,27 @@ def test_transcribe_audio_returns_empty_list_for_empty_audio(tmp_path) -> None:
     assert transcribe_audio(str(empty_audio), "test-api-key") == []
 
 
+def test_transcribe_audio_rejects_unsupported_extensions(tmp_path) -> None:
+    audio_file = tmp_path / "audio.aac"
+    audio_file.write_bytes(b"fake-audio" * 256)
+
+    with pytest.raises(ValueError, match="Unsupported audio format"):
+        transcribe_audio(str(audio_file), "test-api-key")
+
+
+def test_transcribe_audio_rejects_tiny_files(tmp_path) -> None:
+    audio_file = tmp_path / "audio.mp3"
+    audio_file.write_bytes(b"tiny")
+
+    with pytest.raises(ValueError, match="Audio file too small"):
+        transcribe_audio(str(audio_file), "test-api-key")
+
+
 def test_transcribe_audio_returns_float_timestamps(monkeypatch, tmp_path) -> None:
     from backend.services import transcriber
 
     audio_file = tmp_path / "audio.mp3"
-    audio_file.write_bytes(b"fake-audio")
+    audio_file.write_bytes(b"fake-audio" * 256)
     monkeypatch.setattr(transcriber, "OpenAI", FakeClient)
 
     segments = transcribe_audio(str(audio_file), "test-api-key")
@@ -75,7 +91,7 @@ def test_transcribe_audio_with_metadata_returns_detected_language(
     from backend.services import transcriber
 
     audio_file = tmp_path / "audio.mp3"
-    audio_file.write_bytes(b"fake-audio")
+    audio_file.write_bytes(b"fake-audio" * 256)
     monkeypatch.setattr(transcriber, "OpenAI", FakeClient)
 
     payload = transcribe_audio_with_metadata(str(audio_file), "test-api-key")

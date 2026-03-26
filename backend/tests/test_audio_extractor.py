@@ -44,6 +44,76 @@ def test_extract_audio_returns_existing_audio_file_path(monkeypatch) -> None:
         cleanup_audio(audio_path)
 
 
+def test_extract_audio_returns_postprocessed_m4a_file(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    captured_options: dict[str, object] = {}
+
+    class PostProcessedYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+
+        def __enter__(self) -> "PostProcessedYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool) -> dict[str, str]:
+            target_path = tmp_path / "dQw4w9WgXcQ.m4a"
+            target_path.write_bytes(b"fake-audio" * 256)
+            return {"id": "dQw4w9WgXcQ", "ext": "webm"}
+
+        def prepare_filename(self, info: dict[str, str]) -> str:
+            return str(tmp_path / f"{info['id']}.{info['ext']}")
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", PostProcessedYoutubeDL)
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+    )
+
+    assert audio_path == str(tmp_path / "dQw4w9WgXcQ.m4a")
+    assert Path(audio_path).exists()
+    assert captured_options["postprocessors"] == [
+        {
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "m4a",
+            "preferredquality": "128",
+        }
+    ]
+
+
+def test_extract_audio_skips_stale_cookie_file(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    captured_options: dict[str, object] = {}
+    cookie_file = tmp_path / "yt_cookies.txt"
+    cookie_file.write_text("stale-cookie")
+
+    class CookieAwareYoutubeDL(FakeYoutubeDL):
+        def __init__(self, options: dict[str, object]) -> None:
+            captured_options.update(options)
+            super().__init__(options)
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YOUTUBE_COOKIE_FILE", cookie_file)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", CookieAwareYoutubeDL)
+    monkeypatch.setattr(audio_extractor.time, "time", lambda: cookie_file.stat().st_mtime + (31 * 86400))
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+    )
+
+    try:
+        assert "cookiefile" not in captured_options
+    finally:
+        cleanup_audio(audio_path)
+
+
 def test_cleanup_audio_removes_existing_file(tmp_path) -> None:
     audio_file = tmp_path / "sample.m4a"
     audio_file.write_bytes(b"fake-audio")
