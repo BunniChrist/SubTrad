@@ -21,3 +21,6 @@ class TranslateResponse(BaseModel):
     duration_seconds: int
     needs_transcription: bool = False
     source: str
+    target_lang: str
+    detected_language: str | None = None
+    translation_status: str = "translated"
