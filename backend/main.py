@@ -32,16 +32,18 @@ def health_check() -> dict:
     except ModuleNotFoundError:
         from backend.config import get_settings
     s = get_settings()
-    import os
+    import os, subprocess, shutil
+    deno_path = shutil.which("deno")
+    try:
+        deno_ver = subprocess.check_output(["deno", "--version"], timeout=5, stderr=subprocess.STDOUT).decode().split("\n")[0] if deno_path else "not installed"
+    except Exception as e:
+        deno_ver = f"error: {e}"
     return {
         "status": "ok",
         "version": os.environ.get("GIT_COMMIT_SHA") or os.environ.get("SOURCE_COMMIT", "unknown"),
-        "yt_key_len": len(s.youtube_api_key),
-        "yt_key_prefix": s.youtube_api_key[:8] if s.youtube_api_key else "EMPTY",
-        "openai_key_len": len(s.openai_api_key),
-        "env_yt_key": os.environ.get("SUBTRAD_YOUTUBE_API_KEY", "NOT_SET")[:8],
-        "env_keys": [k for k in os.environ if k.startswith("SUBTRAD_")],
+        "deno": deno_ver,
         "cookie_file": os.path.exists("/root/yt_cookies.txt"),
+        "cookie_size": os.path.getsize("/root/yt_cookies.txt") if os.path.exists("/root/yt_cookies.txt") else 0,
     }
 
 
