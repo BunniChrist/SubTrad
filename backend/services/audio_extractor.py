@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
@@ -15,18 +16,28 @@ def extract_audio(url: str, video_id: str) -> str:
     options = {
         "format": "bestaudio[ext=m4a]/bestaudio/best",
         "outtmpl": output_template,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "m4a",
+                "preferredquality": "128",
+            }
+        ],
         "quiet": True,
         "no_warnings": True,
     }
     if YOUTUBE_COOKIE_FILE.exists():
-        options["cookiefile"] = str(YOUTUBE_COOKIE_FILE)
+        age_days = (time.time() - YOUTUBE_COOKIE_FILE.stat().st_mtime) / 86400
+        if age_days < 30:
+            options["cookiefile"] = str(YOUTUBE_COOKIE_FILE)
 
     with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(url, download=True)
-        audio_path = Path(ydl.prepare_filename(info))
+        ydl.extract_info(url, download=True)
 
-    if not audio_path.exists():
+    candidates = sorted(TEMP_AUDIO_DIR.glob(f"{video_id}.*"))
+    if not candidates:
         raise FileNotFoundError(f"Audio file was not created for {video_id}")
+    audio_path = candidates[0]
 
     return str(audio_path)
 

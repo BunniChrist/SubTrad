@@ -5,6 +5,32 @@ from pathlib import Path
 from openai import OpenAI
 
 
+WHISPER_SUPPORTED = {
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".mp4",
+    ".mpeg",
+    ".mpga",
+    ".oga",
+    ".ogg",
+    ".wav",
+    ".webm",
+}
+
+
+def _validate_audio_file(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.suffix.lower() not in WHISPER_SUPPORTED:
+        raise ValueError(f"Unsupported audio format: {path.suffix}")
+    size = path.stat().st_size
+    if size == 0:
+        return
+    if size < 1000:
+        raise ValueError(f"Audio file too small ({size} bytes), likely corrupt")
+
+
 def transcribe_audio_with_metadata(
     audio_path: str,
     api_key: str,
@@ -12,6 +38,7 @@ def transcribe_audio_with_metadata(
     path = Path(audio_path)
     if not path.exists() or path.stat().st_size == 0:
         return {"segments": [], "language": None}
+    _validate_audio_file(path)
 
     client = OpenAI(api_key=api_key)
     with path.open("rb") as audio_file:
