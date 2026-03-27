@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from yt_dlp.utils import DownloadError
@@ -132,6 +133,89 @@ def test_cleanup_audio_ignores_missing_file(tmp_path) -> None:
     cleanup_audio(str(missing_file))
 
     assert missing_file.exists() is False
+
+
+def test_extract_audio_retries_after_rotation(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    rotation_calls: list[str] = []
+    extract_attempts: list[str] = []
+
+    class RetryYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "RetryYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool) -> dict[str, str]:
+            extract_attempts.append(url)
+            if len(extract_attempts) == 1:
+                raise DownloadError("Sign in to confirm you're not a bot")
+            target_path = tmp_path / "dQw4w9WgXcQ.m4a"
+            target_path.write_bytes(b"fake-audio")
+            return {"id": "dQw4w9WgXcQ", "ext": "m4a"}
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", RetryYoutubeDL)
+    monkeypatch.setattr(audio_extractor, "get_settings", lambda: SimpleNamespace(
+        warp_rotation_url="http://10.0.1.1:40002/rotate"
+    ))
+    monkeypatch.setattr(
+        audio_extractor,
+        "rotate_warp_ip",
+        lambda url: rotation_calls.append(url) or True,
+    )
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+    )
+
+    assert audio_path == str(tmp_path / "dQw4w9WgXcQ.m4a")
+    assert extract_attempts == [
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    ]
+    assert rotation_calls == ["http://10.0.1.1:40002/rotate"]
+
+
+def test_extract_audio_raises_after_failed_retry(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    extract_attempts: list[str] = []
+
+    class RetryFailsYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "RetryFailsYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool) -> dict[str, str]:
+            extract_attempts.append(url)
+            if len(extract_attempts) == 1:
+                raise DownloadError("HTTP Error 429: Too Many Requests")
+            raise DownloadError("HTTP Error 429: Too Many Requests")
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", RetryFailsYoutubeDL)
+    monkeypatch.setattr(audio_extractor, "get_settings", lambda: SimpleNamespace(
+        warp_rotation_url="http://10.0.1.1:40002/rotate"
+    ))
+    monkeypatch.setattr(audio_extractor, "rotate_warp_ip", lambda url: True)
+
+    with pytest.raises(DownloadError, match="HTTP Error 429"):
+        extract_audio(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "dQw4w9WgXcQ",
+        )
 
 
 @pytest.mark.integration

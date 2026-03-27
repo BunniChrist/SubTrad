@@ -195,3 +195,113 @@ def test_fetch_existing_subtitles_uses_downloaded_srv3_even_if_ytdlp_raises(
         "text": "Hello world",
     }]
     assert not temp_dir.exists()
+
+
+def test_fetch_existing_subtitles_retries_after_rotation(monkeypatch, tmp_path: Path) -> None:
+    temp_dir = tmp_path / "retry-after-rotation"
+    temp_dir.mkdir()
+    download_attempts: list[list[str]] = []
+    rotation_calls: list[str] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def download(self, urls: list[str]) -> None:
+            download_attempts.append(list(urls))
+            if len(download_attempts) == 1:
+                raise Exception("Sign in to confirm you're not a bot")
+            (temp_dir / "abc123.en.srv3").write_text(
+                '<transcript><text start="1" dur="1.5">Hello world</text></transcript>',
+                encoding="utf-8",
+            )
+
+    monkeypatch.setattr("backend.services.subtitle_fetcher.YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "tempfile",
+        SimpleNamespace(mkdtemp=lambda prefix=None: str(temp_dir)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        subtitle_fetcher.shutil,
+        "rmtree",
+        lambda path, ignore_errors=True: None,
+    )
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "rotate_warp_ip",
+        lambda url: rotation_calls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "get_settings",
+        lambda: SimpleNamespace(warp_rotation_url="http://10.0.1.1:40002/rotate"),
+    )
+
+    result = fetch_existing_subtitles("https://www.youtube.com/watch?v=abc123")
+
+    assert result == [{
+        "start": "1.000",
+        "end": "2.500",
+        "text": "Hello world",
+    }]
+    assert download_attempts == [
+        ["https://www.youtube.com/watch?v=abc123"],
+        ["https://www.youtube.com/watch?v=abc123"],
+    ]
+    assert rotation_calls == ["http://10.0.1.1:40002/rotate"]
+
+
+def test_fetch_existing_subtitles_does_not_retry_without_rotation_url(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    temp_dir = tmp_path / "no-rotation-url"
+    temp_dir.mkdir()
+    rotation_calls: list[str] = []
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def download(self, urls: list[str]) -> None:
+            raise Exception("HTTP Error 429: Too Many Requests")
+
+    monkeypatch.setattr("backend.services.subtitle_fetcher.YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "tempfile",
+        SimpleNamespace(mkdtemp=lambda prefix=None: str(temp_dir)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        subtitle_fetcher.shutil,
+        "rmtree",
+        lambda path, ignore_errors=True: None,
+    )
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "rotate_warp_ip",
+        lambda url: rotation_calls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "get_settings",
+        lambda: SimpleNamespace(warp_rotation_url=""),
+    )
+
+    assert fetch_existing_subtitles("https://www.youtube.com/watch?v=abc123") is None
+    assert rotation_calls == []

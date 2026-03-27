@@ -8,17 +8,33 @@ import xml.etree.ElementTree as ET
 
 import httpx
 from youtube_transcript_api import YouTubeTranscriptApi
+try:
+    from youtube_transcript_api._errors import RequestBlocked
+except ImportError:  # pragma: no cover
+    RequestBlocked = Exception
 
 try:
     from backend.services.subtitle_fetcher import fetch_existing_subtitles
 except ModuleNotFoundError:  # pragma: no cover
     from services.subtitle_fetcher import fetch_existing_subtitles
+try:
+    from backend.services.warp_rotator import is_youtube_block, rotate_warp_ip
+except ModuleNotFoundError:  # pragma: no cover
+    from services.warp_rotator import is_youtube_block, rotate_warp_ip
 
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 TIMEDTEXT_BASE = "https://www.youtube.com/api/timedtext"
 DEFAULT_TRANSCRIPT_LANGS = ["en", "fr", "es", "ja", "de", "pt", "it", "ar", "zh", "ko", "ru"]
 logger = logging.getLogger(__name__)
+
+
+def get_settings():
+    try:
+        from backend.config import get_settings as _get_settings
+    except ModuleNotFoundError:  # pragma: no cover
+        from config import get_settings as _get_settings
+    return _get_settings()
 
 
 def parse_iso8601_duration(duration: str) -> int:
@@ -206,12 +222,29 @@ def fetch_captions_via_transcript_lib(
 ) -> list[dict[str, float | str]] | None:
     """Fast path: fetch captions via youtube-transcript-api."""
     languages = preferred_langs or list(DEFAULT_TRANSCRIPT_LANGS)
+    transcript_api = YouTubeTranscriptApi()
 
     try:
-        transcript = YouTubeTranscriptApi().fetch(video_id, languages=languages)
+        transcript = transcript_api.fetch(video_id, languages=languages)
     except Exception as exc:
-        logger.warning("youtube-transcript-api failed for %s: %s", video_id, exc)
-        return None
+        if isinstance(exc, RequestBlocked) or is_youtube_block(exc):
+            rotation_url = get_settings().warp_rotation_url
+            if rotation_url and rotate_warp_ip(rotation_url):
+                try:
+                    transcript = transcript_api.fetch(video_id, languages=languages)
+                except Exception as retry_exc:
+                    logger.warning(
+                        "youtube-transcript-api retry failed for %s: %s",
+                        video_id,
+                        retry_exc,
+                    )
+                    return None
+            else:
+                logger.warning("youtube-transcript-api failed for %s: %s", video_id, exc)
+                return None
+        else:
+            logger.warning("youtube-transcript-api failed for %s: %s", video_id, exc)
+            return None
 
     segments = [
         {

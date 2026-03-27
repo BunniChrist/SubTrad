@@ -4,10 +4,24 @@ import time
 from pathlib import Path
 
 from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
+
+try:
+    from backend.services.warp_rotator import is_youtube_block, rotate_warp_ip
+except ModuleNotFoundError:  # pragma: no cover
+    from services.warp_rotator import is_youtube_block, rotate_warp_ip
 
 
 TEMP_AUDIO_DIR = Path("/tmp/subtrad")
 YOUTUBE_COOKIE_FILE = Path("/root/yt_cookies.txt")
+
+
+def get_settings():
+    try:
+        from backend.config import get_settings as _get_settings
+    except ModuleNotFoundError:  # pragma: no cover
+        from config import get_settings as _get_settings
+    return _get_settings()
 
 
 def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
@@ -34,8 +48,19 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
     if proxy:
         options["proxy"] = proxy
 
-    with YoutubeDL(options) as ydl:
-        ydl.extract_info(url, download=True)
+    def _extract() -> None:
+        with YoutubeDL(options) as ydl:
+            ydl.extract_info(url, download=True)
+
+    try:
+        _extract()
+    except DownloadError as exc:
+        if not is_youtube_block(exc):
+            raise
+        rotation_url = get_settings().warp_rotation_url
+        if not rotation_url or not rotate_warp_ip(rotation_url):
+            raise
+        _extract()
 
     candidates = sorted(TEMP_AUDIO_DIR.glob(f"{video_id}.*"))
     if not candidates:

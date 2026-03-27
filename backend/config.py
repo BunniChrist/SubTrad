@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     youtube_api_key: str = ""
     proxy_url: str = ""
     warp_proxy_url: str = ""
+    warp_rotation_url: str = ""
 
     model_config = SettingsConfigDict(env_prefix="subtrad_", extra="ignore")
 

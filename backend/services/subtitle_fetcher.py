@@ -6,6 +6,11 @@ from pathlib import Path
 
 from yt_dlp import YoutubeDL
 
+try:
+    from backend.services.warp_rotator import is_youtube_block, rotate_warp_ip
+except ModuleNotFoundError:  # pragma: no cover
+    from services.warp_rotator import is_youtube_block, rotate_warp_ip
+
 
 # Formats in priority order: srv3 (XML, best parsed), vtt, srt
 _PREFERRED_FORMATS = ("srv3", "vtt", "srt")
@@ -58,6 +63,7 @@ def _parse_vtt(vtt_content: str) -> list[dict[str, str]]:
 
     return entries
 
+
 def _parse_track_content(content: str, ext: str) -> list[dict[str, str]]:
     """Parse subtitle content based on format."""
     if ext == "srv3":
@@ -70,6 +76,14 @@ def _parse_track_content(content: str, ext: str) -> list[dict[str, str]]:
         return _parse_vtt(content)
     else:
         return parse_srt(content)
+
+
+def get_settings():
+    try:
+        from backend.config import get_settings as _get_settings
+    except ModuleNotFoundError:  # pragma: no cover
+        from config import get_settings as _get_settings
+    return _get_settings()
 
 
 def fetch_existing_subtitles(
@@ -96,11 +110,22 @@ def fetch_existing_subtitles(
     if cookie_file:
         options["cookiefile"] = cookie_file
 
-    try:
+    def _download_with_ytdlp() -> None:
         with YoutubeDL(options) as ydl:
             ydl.download([url])
-    except Exception:
+
+    try:
+        _download_with_ytdlp()
+    except Exception as exc:
         download_failed = True
+        if is_youtube_block(exc):
+            rotation_url = get_settings().warp_rotation_url
+            if rotation_url and rotate_warp_ip(rotation_url):
+                try:
+                    _download_with_ytdlp()
+                    download_failed = False
+                except Exception:
+                    download_failed = True
     try:
         for ext in _PREFERRED_FORMATS:
             for subtitle_file in sorted(Path(temp_dir).glob(f"*.{ext}")):

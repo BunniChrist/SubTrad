@@ -1,10 +1,13 @@
 import pytest
 import httpx
 
+from types import SimpleNamespace
+
 from backend.services.youtube_api import (
     parse_iso8601_duration,
     get_video_info,
     fetch_captions,
+    fetch_captions_via_transcript_lib,
     parse_timedtext_xml,
 )
 
@@ -355,3 +358,65 @@ def test_fetch_captions_passes_proxy_and_cookie_file_to_ytdlp_fallback(monkeypat
         "proxy": "http://proxy.test",
         "cookie_file": "/tmp/cookies.txt",
     }]
+
+
+def test_fetch_captions_via_transcript_lib_retries_after_rotation(monkeypatch) -> None:
+    from backend.services import youtube_api
+
+    rotation_calls: list[str] = []
+    fetch_calls: list[tuple[str, list[str]]] = []
+
+    class RequestBlocked(Exception):
+        pass
+
+    class FakeTranscriptApi:
+        def fetch(self, video_id: str, languages: list[str]):
+            fetch_calls.append((video_id, list(languages)))
+            if len(fetch_calls) == 1:
+                raise RequestBlocked("RequestBlocked")
+            return SimpleNamespace(
+                snippets=[
+                    SimpleNamespace(text="Bonjour", start=1.0, duration=2.0),
+                ]
+            )
+
+    monkeypatch.setattr(youtube_api, "YouTubeTranscriptApi", lambda: FakeTranscriptApi())
+    monkeypatch.setattr(youtube_api, "RequestBlocked", RequestBlocked)
+    monkeypatch.setattr(
+        youtube_api,
+        "rotate_warp_ip",
+        lambda url: rotation_calls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        youtube_api,
+        "get_settings",
+        lambda: SimpleNamespace(warp_rotation_url="http://10.0.1.1:40002/rotate"),
+    )
+
+    result = fetch_captions_via_transcript_lib("abc123", preferred_langs=["fr"])
+
+    assert result == [{"text": "Bonjour", "start": 1.0, "duration": 2.0}]
+    assert fetch_calls == [("abc123", ["fr"]), ("abc123", ["fr"])]
+    assert rotation_calls == ["http://10.0.1.1:40002/rotate"]
+
+
+def test_fetch_captions_via_transcript_lib_returns_none_when_rotation_fails(monkeypatch) -> None:
+    from backend.services import youtube_api
+
+    class RequestBlocked(Exception):
+        pass
+
+    class FakeTranscriptApi:
+        def fetch(self, video_id: str, languages: list[str]):
+            raise RequestBlocked("RequestBlocked")
+
+    monkeypatch.setattr(youtube_api, "YouTubeTranscriptApi", lambda: FakeTranscriptApi())
+    monkeypatch.setattr(youtube_api, "RequestBlocked", RequestBlocked)
+    monkeypatch.setattr(youtube_api, "rotate_warp_ip", lambda url: False)
+    monkeypatch.setattr(
+        youtube_api,
+        "get_settings",
+        lambda: SimpleNamespace(warp_rotation_url="http://10.0.1.1:40002/rotate"),
+    )
+
+    assert fetch_captions_via_transcript_lib("abc123", preferred_langs=["fr"]) is None
