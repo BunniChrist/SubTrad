@@ -194,9 +194,12 @@ def fetch_captions_with_source(
             cookie_file=cookie_file,
         ), "existing_captions"
 
-    # Step 2: Pick the best track (prefer target_lang, then any available)
+    # Step 2: Pick the best track (prefer source language, avoid target_lang)
+    # Fetching subtitles already in the target language would cause the
+    # translator to detect same-language and skip translation entirely.
     languages = [t["snippet"]["language"] for t in tracks]
-    chosen_lang = target_lang if target_lang in languages else languages[0]
+    source_languages = [lang for lang in languages if lang != target_lang]
+    chosen_lang = source_languages[0] if source_languages else languages[0]
 
     # Step 3: Try timedtext endpoint
     segments = _fetch_timedtext_segments(video_id, chosen_lang, proxy=proxy)
@@ -261,9 +264,19 @@ def fetch_captions_via_transcript_lib(
 def _build_transcript_language_candidates(target_lang: str) -> list[str]:
     candidates: list[str] = []
 
-    for language in (_normalize_language(target_lang), *DEFAULT_TRANSCRIPT_LANGS):
-        if language and language not in candidates:
-            candidates.append(language)
+    # Prefer source languages first (any language OTHER than target).
+    # The target language is appended last so we only use it as a
+    # last resort — fetching subtitles already in the target language
+    # causes the translator to skip translation entirely.
+    for language in DEFAULT_TRANSCRIPT_LANGS:
+        normalized = _normalize_language(language)
+        if normalized and normalized != _normalize_language(target_lang) and normalized not in candidates:
+            candidates.append(normalized)
+
+    # Append target_lang last as ultimate fallback
+    normalized_target = _normalize_language(target_lang)
+    if normalized_target and normalized_target not in candidates:
+        candidates.append(normalized_target)
 
     return candidates
 
