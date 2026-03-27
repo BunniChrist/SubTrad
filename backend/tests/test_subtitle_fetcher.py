@@ -150,6 +150,6 @@ def test_fetch_existing_subtitles_downloads_and_cleans_up_srv3_files(
     assert captured_options["subtitlesformat"] == "srv3"
     assert captured_options["subtitleslangs"] == ["all"]
     assert captured_options["extractor_args"] == {
-        "youtube": {"player_client": ["web"]}
+        "youtube": {"player_client": ["web", "default"]}
     }
     assert not temp_dir.exists()

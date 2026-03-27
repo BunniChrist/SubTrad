@@ -85,7 +85,7 @@ def test_extract_audio_returns_postprocessed_m4a_file(monkeypatch, tmp_path) -> 
         }
     ]
     assert captured_options["extractor_args"] == {
-        "youtube": {"player_client": ["web"]}
+        "youtube": {"player_client": ["web", "default"]}
     }
 
 

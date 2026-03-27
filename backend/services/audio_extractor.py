@@ -14,7 +14,7 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
     TEMP_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     output_template = str(TEMP_AUDIO_DIR / f"{video_id}.%(ext)s")
     options = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": "bestaudio/best",
         "outtmpl": output_template,
         "postprocessors": [
             {
@@ -25,7 +25,7 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
         ],
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["web"]}},
+        "extractor_args": {"youtube": {"player_client": ["web", "default"]}},
     }
     if YOUTUBE_COOKIE_FILE.exists():
         age_days = (time.time() - YOUTUBE_COOKIE_FILE.stat().st_mtime) / 86400
