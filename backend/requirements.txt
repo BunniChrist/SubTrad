@@ -7,3 +7,4 @@ pysocks==1.7.1
 pytest==8.4.1
 yt-dlp==2025.3.31
 openai==1.107.2
+youtube-transcript-api==1.2.4
