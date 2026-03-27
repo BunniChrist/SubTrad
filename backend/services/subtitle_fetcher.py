@@ -78,6 +78,7 @@ def fetch_existing_subtitles(
     cookie_file: str | None = None,
 ) -> list[dict[str, str]] | None:
     temp_dir = tempfile.mkdtemp(prefix="subtrad_")
+    download_failed = False
     options = {
         "skip_download": True,
         "writesubtitles": True,
@@ -97,15 +98,17 @@ def fetch_existing_subtitles(
     try:
         with YoutubeDL(options) as ydl:
             ydl.download([url])
-
+    except Exception:
+        download_failed = True
+    try:
         for ext in _PREFERRED_FORMATS:
             for subtitle_file in sorted(Path(temp_dir).glob(f"*.{ext}")):
                 content = subtitle_file.read_text(encoding="utf-8")
                 segments = _parse_track_content(content, ext)
                 if segments:
                     return segments
-    except Exception:
-        return None
+        if download_failed:
+            return None
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 

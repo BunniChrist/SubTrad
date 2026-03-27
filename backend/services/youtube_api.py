@@ -47,6 +47,25 @@ def parse_timedtext_xml(xml_content: str) -> list[dict[str, str]]:
             "end": f"{start + dur:.3f}",
             "text": content,
         })
+
+    if segments:
+        return segments
+
+    for paragraph_elem in root.findall(".//p"):
+        start_ms = float(paragraph_elem.get("t", "0"))
+        dur_ms = float(paragraph_elem.get("d", "0"))
+        content = "".join(paragraph_elem.itertext())
+        if not content.strip():
+            continue
+
+        start = start_ms / 1000
+        dur = dur_ms / 1000
+        segments.append({
+            "start": f"{start:.3f}",
+            "end": f"{start + dur:.3f}",
+            "text": content,
+        })
+
     return segments
 
 

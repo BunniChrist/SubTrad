@@ -150,3 +150,45 @@ def test_fetch_existing_subtitles_downloads_and_cleans_up_srv3_files(
     assert captured_options["subtitlesformat"] == "srv3"
     assert captured_options["subtitleslangs"] == ["all"]
     assert not temp_dir.exists()
+
+
+def test_fetch_existing_subtitles_uses_downloaded_srv3_even_if_ytdlp_raises(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    temp_dir = tmp_path / "partial-download"
+    temp_dir.mkdir()
+
+    class FakeYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "FakeYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def download(self, urls: list[str]) -> None:
+            (temp_dir / "abc123.en.srv3").write_text(
+                '<transcript><text start="1" dur="1.5">Hello world</text></transcript>',
+                encoding="utf-8",
+            )
+            raise Exception("HTTP Error 429: Too Many Requests")
+
+    monkeypatch.setattr("backend.services.subtitle_fetcher.YoutubeDL", FakeYoutubeDL)
+    monkeypatch.setattr(
+        subtitle_fetcher,
+        "tempfile",
+        SimpleNamespace(mkdtemp=lambda prefix=None: str(temp_dir)),
+        raising=False,
+    )
+
+    result = fetch_existing_subtitles("https://www.youtube.com/watch?v=abc123")
+
+    assert result == [{
+        "start": "1.000",
+        "end": "2.500",
+        "text": "Hello world",
+    }]
+    assert not temp_dir.exists()
