@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import xml.etree.ElementTree as ET
 
 import httpx
+from youtube_transcript_api import YouTubeTranscriptApi
 
 try:
     from backend.services.subtitle_fetcher import fetch_existing_subtitles
@@ -15,6 +17,8 @@ except ModuleNotFoundError:  # pragma: no cover
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 TIMEDTEXT_BASE = "https://www.youtube.com/api/timedtext"
+DEFAULT_TRANSCRIPT_LANGS = ["en", "fr", "es", "ja", "de", "pt", "it", "ar", "zh", "ko", "ru"]
+logger = logging.getLogger(__name__)
 
 
 def parse_iso8601_duration(duration: str) -> int:
@@ -115,14 +119,39 @@ def fetch_captions(
     proxy: str = "",
     cookie_file: str | None = None,
 ) -> list[dict[str, str]] | None:
+    subtitles, _source = fetch_captions_with_source(
+        video_id,
+        target_lang,
+        api_key,
+        proxy=proxy,
+        cookie_file=cookie_file,
+    )
+    return subtitles
+
+
+def fetch_captions_with_source(
+    video_id: str,
+    target_lang: str,
+    api_key: str,
+    proxy: str = "",
+    cookie_file: str | None = None,
+) -> tuple[list[dict[str, str]] | list[dict[str, float | str]] | None, str | None]:
     """Fetch captions for a YouTube video.
 
+    0. Tries youtube-transcript-api fast path
     1. Lists available caption tracks via API v3
     2. Tries to download via public timedtext endpoint
     3. Falls back to yt-dlp if timedtext fails
 
-    Returns subtitle segments or None if no captions available.
+    Returns subtitle segments with a source identifier, or (None, None).
     """
+    segments = fetch_captions_via_transcript_lib(
+        video_id,
+        preferred_langs=_build_transcript_language_candidates(target_lang),
+    )
+    if segments:
+        return segments, "youtube_transcript_api"
+
     # Step 1: List available caption tracks
     url = f"{YOUTUBE_API_BASE}/captions"
     params = {
@@ -133,7 +162,7 @@ def fetch_captions(
     response = httpx.get(url, params=params, timeout=10)
 
     if response.status_code != 200:
-        return None
+        return None, None
 
     data = response.json()
     tracks = data.get("items", [])
@@ -141,13 +170,13 @@ def fetch_captions(
         for language in _build_asr_language_candidates(video_id, target_lang, api_key):
             segments = _fetch_timedtext_segments(video_id, language, asr=True, proxy=proxy)
             if segments:
-                return segments
+                return segments, "existing_captions"
         youtube_url = f"https://www.youtube.com/watch?v={video_id}"
         return fetch_existing_subtitles(
             youtube_url,
             proxy=proxy,
             cookie_file=cookie_file,
-        )
+        ), "existing_captions"
 
     # Step 2: Pick the best track (prefer target_lang, then any available)
     languages = [t["snippet"]["language"] for t in tracks]
@@ -156,11 +185,11 @@ def fetch_captions(
     # Step 3: Try timedtext endpoint
     segments = _fetch_timedtext_segments(video_id, chosen_lang, proxy=proxy)
     if segments:
-        return segments
+        return segments, "existing_captions"
 
     segments = _fetch_timedtext_segments(video_id, chosen_lang, asr=True, proxy=proxy)
     if segments:
-        return segments
+        return segments, "existing_captions"
 
     # Step 4: Fall back to yt-dlp
     youtube_url = f"https://www.youtube.com/watch?v={video_id}"
@@ -168,7 +197,42 @@ def fetch_captions(
         youtube_url,
         proxy=proxy,
         cookie_file=cookie_file,
-    )
+    ), "existing_captions"
+
+
+def fetch_captions_via_transcript_lib(
+    video_id: str,
+    preferred_langs: list[str] | None = None,
+) -> list[dict[str, float | str]] | None:
+    """Fast path: fetch captions via youtube-transcript-api."""
+    languages = preferred_langs or list(DEFAULT_TRANSCRIPT_LANGS)
+
+    try:
+        transcript = YouTubeTranscriptApi().fetch(video_id, languages=languages)
+    except Exception as exc:
+        logger.warning("youtube-transcript-api failed for %s: %s", video_id, exc)
+        return None
+
+    segments = [
+        {
+            "text": snippet.text,
+            "start": float(snippet.start),
+            "duration": float(snippet.duration),
+        }
+        for snippet in transcript.snippets
+        if snippet.text.strip()
+    ]
+    return segments or None
+
+
+def _build_transcript_language_candidates(target_lang: str) -> list[str]:
+    candidates: list[str] = []
+
+    for language in (_normalize_language(target_lang), *DEFAULT_TRANSCRIPT_LANGS):
+        if language and language not in candidates:
+            candidates.append(language)
+
+    return candidates
 
 
 def _normalize_language(language: str | None) -> str | None:

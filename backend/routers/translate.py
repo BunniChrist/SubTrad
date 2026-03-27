@@ -18,7 +18,10 @@ try:
     from backend.services.translator import translate_subtitles_with_metadata
     from backend.services.url_validator import detect_platform, validate_url
     from backend.services.video_id import extract_video_id
-    from backend.services.youtube_api import get_video_info, fetch_captions as fetch_captions_via_api
+    from backend.services.youtube_api import (
+        fetch_captions_with_source as fetch_captions_via_api,
+        get_video_info,
+    )
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
     from config import get_settings
     from models import TranslateRequest, TranslateResponse
@@ -31,7 +34,10 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
     from services.translator import translate_subtitles_with_metadata
     from services.url_validator import detect_platform, validate_url
     from services.video_id import extract_video_id
-    from services.youtube_api import get_video_info, fetch_captions as fetch_captions_via_api
+    from services.youtube_api import (
+        fetch_captions_with_source as fetch_captions_via_api,
+        get_video_info,
+    )
 
 
 router = APIRouter(prefix="/api", tags=["translate"])
@@ -167,13 +173,18 @@ def _handle_youtube(
             },
         )
 
-    subtitles = fetch_captions_via_api(
+    subtitles_result = fetch_captions_via_api(
         video_id,
         target_lang,
         settings.youtube_api_key,
         proxy=settings.warp_proxy_url or settings.proxy_url,
         cookie_file=str(YOUTUBE_COOKIE_FILE) if YOUTUBE_COOKIE_FILE.exists() else None,
     )
+    subtitle_source = "existing_captions"
+    if isinstance(subtitles_result, tuple):
+        subtitles, subtitle_source = subtitles_result
+    else:
+        subtitles = subtitles_result
 
     if subtitles is None:
         audio_path = ""
@@ -242,7 +253,7 @@ def _handle_youtube(
         else translation_result.segments,
         duration_seconds=duration_result.duration_seconds,
         needs_transcription=False,
-        source="existing_captions",
+        source=subtitle_source,
         target_lang=target_lang,
         detected_language=translation_result["detected_language"]
         if isinstance(translation_result, dict)
