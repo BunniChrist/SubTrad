@@ -54,6 +54,25 @@ def test_parse_timedtext_xml_returns_segments() -> None:
     ]
 
 
+def test_parse_timedtext_xml_supports_srv3_paragraph_nodes() -> None:
+    xml_content = """<?xml version="1.0" encoding="utf-8" ?>
+<timedtext format="3">
+    <body>
+        <p t="1360" d="1680">[♪♪♪]</p>
+        <p t="18640" d="3240">We&#39;re no strangers to love</p>
+    </body>
+</timedtext>"""
+
+    assert parse_timedtext_xml(xml_content) == [
+        {"start": "1.360", "end": "3.040", "text": "[♪♪♪]"},
+        {
+            "start": "18.640",
+            "end": "21.880",
+            "text": "We're no strangers to love",
+        },
+    ]
+
+
 def test_parse_timedtext_xml_empty_returns_empty() -> None:
     xml_content = """<?xml version="1.0" encoding="utf-8" ?>
 <transcript></transcript>"""
