@@ -25,6 +25,7 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
         ],
         "quiet": True,
         "no_warnings": True,
+        "extractor_args": {"youtube": {"player_client": ["web"]}},
     }
     if YOUTUBE_COOKIE_FILE.exists():
         age_days = (time.time() - YOUTUBE_COOKIE_FILE.stat().st_mtime) / 86400

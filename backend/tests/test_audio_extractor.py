@@ -84,6 +84,9 @@ def test_extract_audio_returns_postprocessed_m4a_file(monkeypatch, tmp_path) -> 
             "preferredquality": "128",
         }
     ]
+    assert captured_options["extractor_args"] == {
+        "youtube": {"player_client": ["web"]}
+    }
 
 
 def test_extract_audio_skips_stale_cookie_file(monkeypatch, tmp_path) -> None:
