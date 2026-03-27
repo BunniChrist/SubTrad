@@ -176,13 +176,57 @@ def _handle_youtube(
     )
 
     if subtitles is None:
-        return JSONResponse(
-            status_code=200,
-            content={
-                "redirect": "/premium.html",
-                "reason": "no_captions",
-            },
+        audio_path = ""
+        try:
+            audio_path = extract_audio(
+                f"https://www.youtube.com/watch?v={video_id}",
+                video_id,
+                proxy=settings.warp_proxy_url or settings.proxy_url,
+            )
+            transcription_result = transcribe_audio_with_metadata(
+                audio_path,
+                settings.openai_api_key,
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "detail": "Transcription pipeline failed",
+                    "error": str(exc),
+                },
+            )
+        finally:
+            if audio_path:
+                cleanup_audio(audio_path)
+
+        translation_result = translate_subtitles_with_metadata(
+            transcription_result["segments"],
+            target_lang,
+            settings.openai_api_key,
+            source_lang=transcription_result.get("language"),
         )
+
+        response = build_translate_response(
+            platform="youtube",
+            video_id=video_id,
+            subtitles=translation_result["segments"]
+            if isinstance(translation_result, dict)
+            else translation_result.segments,
+            duration_seconds=duration_result.duration_seconds,
+            needs_transcription=True,
+            source="whisper_transcription",
+            target_lang=target_lang,
+            detected_language=translation_result["detected_language"]
+            if isinstance(translation_result, dict)
+            else translation_result.detected_language,
+            translation_status=translation_result["translation_status"]
+            if isinstance(translation_result, dict)
+            else translation_result.translation_status,
+        )
+        counter.increment(video_id, target_lang)
+        if counter.should_cache(video_id, target_lang):
+            cache.store(video_id, target_lang, response.model_dump())
+        return response
 
     translation_result = translate_subtitles_with_metadata(
         subtitles,

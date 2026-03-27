@@ -634,9 +634,11 @@ def test_youtube_uses_api_for_duration_and_captions(monkeypatch) -> None:
     assert data["subtitles"] == [{"start": "1.000", "end": "3.000", "text": "Hola"}]
 
 
-def test_youtube_no_captions_returns_premium_redirect(monkeypatch) -> None:
-    """YouTube videos with no captions should redirect to premium."""
+def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
+    """YouTube videos with no captions should use Whisper transcription."""
     from backend.routers import translate
+
+    cleanup_calls: list[str] = []
 
     monkeypatch.setattr(
         translate,
@@ -647,6 +649,33 @@ def test_youtube_no_captions_returns_premium_redirect(monkeypatch) -> None:
         translate,
         "fetch_captions_via_api",
         lambda video_id, target_lang, api_key, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        translate,
+        "extract_audio",
+        lambda url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path, api_key: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
+            "language": "en",
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+            "detected_language": source_lang,
+            "translation_status": "translated",
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "cleanup_audio",
+        lambda audio_path: cleanup_calls.append(audio_path),
     )
 
     response = client.post(
@@ -659,8 +688,9 @@ def test_youtube_no_captions_returns_premium_redirect(monkeypatch) -> None:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["redirect"] == "/premium.html"
-    assert data["reason"] == "no_captions"
+    assert data["source"] == "whisper_transcription"
+    assert data["needs_transcription"] is True
+    assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 
 
 def test_youtube_api_error_falls_back_to_502(monkeypatch) -> None:
