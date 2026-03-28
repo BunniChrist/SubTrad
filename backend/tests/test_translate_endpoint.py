@@ -344,7 +344,7 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
         lambda audio_path: cleanup_calls.append(audio_path),
     )
 
-    def raise_transcription_error(audio_path: str, api_key: str) -> dict[str, object]:
+    def raise_transcription_error(audio_path: str) -> dict[str, object]:
         raise RuntimeError("Whisper API unavailable")
 
     monkeypatch.setattr(
