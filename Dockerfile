@@ -13,11 +13,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ backend/
 COPY frontend/ frontend/
 COPY entrypoint.sh .
-RUN mkdir -p data && chmod +x entrypoint.sh
+RUN mkdir -p data models && chmod +x entrypoint.sh
 
 ARG GIT_COMMIT_SHA=unknown
 ENV PYTHONUNBUFFERED=1
 ENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}
+ENV HF_HOME=/app/models
 
 EXPOSE 8010
 
