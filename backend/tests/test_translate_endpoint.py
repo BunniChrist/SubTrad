@@ -289,7 +289,7 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
     monkeypatch.setattr(
         translate,
         "transcribe_audio_with_metadata",
-        lambda audio_path, api_key: {
+        lambda audio_path: {
             "segments": [{"start": 0.0, "end": 1.5, "text": "Hello world"}],
             "language": "en",
         },
@@ -658,7 +658,7 @@ def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "transcribe_audio_with_metadata",
-        lambda audio_path, api_key: {
+        lambda audio_path: {
             "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
             "language": "en",
         },
