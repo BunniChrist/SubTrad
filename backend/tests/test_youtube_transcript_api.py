@@ -32,12 +32,12 @@ def test_fetch_captions_via_transcript_lib_returns_formatted_segments(monkeypatc
     )
 
     assert segments == [
-        {"text": "Hello", "start": 1.25, "duration": 2.5},
-        {"text": "World", "start": 3.75, "duration": 1.0},
+        {"text": "Hello", "start": 1.25, "end": 3.75},
+        {"text": "World", "start": 3.75, "end": 4.75},
     ]
     assert all(isinstance(segment["text"], str) for segment in segments)
     assert all(isinstance(segment["start"], float) for segment in segments)
-    assert all(isinstance(segment["duration"], float) for segment in segments)
+    assert all(isinstance(segment["end"], float) for segment in segments)
 
 
 def test_fetch_captions_via_transcript_lib_returns_none_on_exception(monkeypatch) -> None:

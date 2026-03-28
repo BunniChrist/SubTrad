@@ -395,7 +395,7 @@ def test_fetch_captions_via_transcript_lib_retries_after_rotation(monkeypatch) -
 
     result = fetch_captions_via_transcript_lib("abc123", preferred_langs=["fr"])
 
-    assert result == [{"text": "Bonjour", "start": 1.0, "duration": 2.0}]
+    assert result == [{"text": "Bonjour", "start": 1.0, "end": 3.0}]
     assert fetch_calls == [("abc123", ["fr"]), ("abc123", ["fr"])]
     assert rotation_calls == ["http://10.0.1.1:40002/rotate"]
 

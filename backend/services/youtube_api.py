@@ -253,7 +253,7 @@ def fetch_captions_via_transcript_lib(
         {
             "text": snippet.text,
             "start": float(snippet.start),
-            "duration": float(snippet.duration),
+            "end": float(snippet.start) + float(snippet.duration),
         }
         for snippet in transcript.snippets
         if snippet.text.strip()
