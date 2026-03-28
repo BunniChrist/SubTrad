@@ -194,10 +194,7 @@ def _handle_youtube(
                 video_id,
                 proxy=settings.warp_proxy_url or settings.proxy_url,
             )
-            transcription_result = transcribe_audio_with_metadata(
-                audio_path,
-                settings.openai_api_key,
-            )
+            transcription_result = transcribe_audio_with_metadata(audio_path)
         except Exception as exc:
             return JSONResponse(
                 status_code=502,
@@ -333,10 +330,7 @@ def _handle_ytdlp(
     audio_path = ""
     try:
         audio_path = extract_audio(url, video_id, proxy=settings.proxy_url)
-        transcription_result = transcribe_audio_with_metadata(
-            audio_path,
-            settings.openai_api_key,
-        )
+        transcription_result = transcribe_audio_with_metadata(audio_path)
     except Exception as exc:
         return JSONResponse(
             status_code=502,

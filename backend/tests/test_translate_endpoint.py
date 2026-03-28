@@ -289,7 +289,7 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
     monkeypatch.setattr(
         translate,
         "transcribe_audio_with_metadata",
-        lambda audio_path, api_key: {
+        lambda audio_path: {
             "segments": [{"start": 0.0, "end": 1.5, "text": "Hello world"}],
             "language": "en",
         },
@@ -344,7 +344,7 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
         lambda audio_path: cleanup_calls.append(audio_path),
     )
 
-    def raise_transcription_error(audio_path: str, api_key: str) -> dict[str, object]:
+    def raise_transcription_error(audio_path: str) -> dict[str, object]:
         raise RuntimeError("Whisper API unavailable")
 
     monkeypatch.setattr(
@@ -658,7 +658,7 @@ def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
     monkeypatch.setattr(
         translate,
         "transcribe_audio_with_metadata",
-        lambda audio_path, api_key: {
+        lambda audio_path: {
             "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
             "language": "en",
         },
