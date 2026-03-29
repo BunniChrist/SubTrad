@@ -277,7 +277,7 @@ def _handle_ytdlp(
 ) -> TranslateResponse:
     """Handle TikTok/Instagram videos via yt-dlp (existing flow)."""
     try:
-        duration_seconds = fetch_video_duration_seconds(url, proxy=settings.proxy_url)
+        duration_seconds = fetch_video_duration_seconds(url, proxy=settings.warp_proxy_url or settings.proxy_url)
     except Exception as exc:
         return JSONResponse(
             status_code=502,
@@ -298,7 +298,7 @@ def _handle_ytdlp(
             },
         )
 
-    subtitles = fetch_existing_subtitles(url, proxy=settings.proxy_url)
+    subtitles = fetch_existing_subtitles(url, proxy=settings.warp_proxy_url or settings.proxy_url)
     if subtitles is not None:
         translation_result = translate_subtitles_with_metadata(
             subtitles,
@@ -329,7 +329,7 @@ def _handle_ytdlp(
 
     audio_path = ""
     try:
-        audio_path = extract_audio(url, video_id, proxy=settings.proxy_url)
+        audio_path = extract_audio(url, video_id, proxy=settings.warp_proxy_url or settings.proxy_url)
         transcription_result = transcribe_audio_with_metadata(audio_path)
     except Exception as exc:
         return JSONResponse(
