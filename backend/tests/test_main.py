@@ -6,34 +6,22 @@ from backend.main import app
 client = TestClient(app)
 
 
-def test_root_serves_frontend_index() -> None:
+def test_root_is_not_served() -> None:
     response = client.get("/")
 
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-    assert "SubTrad" in response.text
+    assert response.status_code == 404
 
 
-def test_root_head_returns_frontend_headers() -> None:
-    response = client.head("/")
-
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-
-
-def test_frontend_css_asset_is_served() -> None:
-    response = client.get("/css/style.css")
-
-    assert response.status_code == 200
-    assert "text/css" in response.headers["content-type"]
-
-
-def test_legal_page_is_served() -> None:
+def test_legal_page_is_not_served() -> None:
     response = client.get("/legal.html")
 
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-    assert "SubTrad - Informations légales" in response.text
+    assert response.status_code == 404
+
+
+def test_frontend_css_asset_is_not_served() -> None:
+    response = client.get("/css/style.css")
+
+    assert response.status_code == 404
 
 
 def test_health_endpoint_returns_ok_status() -> None:
