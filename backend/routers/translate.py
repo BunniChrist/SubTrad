@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -8,6 +9,7 @@ from yt_dlp import YoutubeDL
 
 try:
     from backend.config import get_settings
+    from backend.export_formats import to_md, to_txt, to_vtt
     from backend.models import TranslateRequest, TranslateResponse
     from backend.services.audio_extractor import cleanup_audio, extract_audio
     from backend.services.cache import SubtitleCache
@@ -18,12 +20,14 @@ try:
     from backend.services.translator import translate_subtitles_with_metadata
     from backend.services.url_validator import detect_platform, validate_url
     from backend.services.video_id import extract_video_id
+    from backend.services.warp_rotator import is_youtube_block, rotate_warp_ip
     from backend.services.youtube_api import (
         fetch_captions_with_source as fetch_captions_via_api,
         get_video_info,
     )
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
     from config import get_settings
+    from export_formats import to_md, to_txt, to_vtt
     from models import TranslateRequest, TranslateResponse
     from services.audio_extractor import cleanup_audio, extract_audio
     from services.cache import SubtitleCache
@@ -34,6 +38,7 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
     from services.translator import translate_subtitles_with_metadata
     from services.url_validator import detect_platform, validate_url
     from services.video_id import extract_video_id
+    from services.warp_rotator import is_youtube_block, rotate_warp_ip
     from services.youtube_api import (
         fetch_captions_with_source as fetch_captions_via_api,
         get_video_info,
@@ -72,6 +77,7 @@ def build_translate_response(
     target_lang: str,
     detected_language: str | None,
     translation_status: str,
+    exports: dict[str, str] | None = None,
 ) -> TranslateResponse:
     return TranslateResponse(
         platform=platform,
@@ -83,7 +89,45 @@ def build_translate_response(
         target_lang=target_lang,
         detected_language=detected_language,
         translation_status=translation_status,
+        exports=exports,
     )
+
+
+def _build_transcript_exports(
+    *,
+    segments: list[dict[str, float | str]],
+    platform: str,
+    video_id: str,
+    language: str | None,
+) -> dict[str, str]:
+    metadata = {
+        "title": f"{platform}-{video_id}",
+        "platform": platform,
+        "video_id": video_id,
+        "language": language or "",
+        "date": date.today().isoformat(),
+    }
+    return {
+        "vtt": to_vtt(segments),
+        "txt": to_txt(segments),
+        "md": to_md(segments, metadata=metadata),
+    }
+
+
+def _platform_error(detail: str, error_code: str, status_code: int = 422) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content={"detail": detail, "error_code": error_code})
+
+
+def _call_ytdlp_with_retry(operation, *, settings):
+    try:
+        return operation()
+    except Exception as exc:
+        if not is_youtube_block(exc):
+            raise
+        rotation_url = settings.warp_rotation_url
+        if not rotation_url or not rotate_warp_ip(rotation_url):
+            raise
+        return operation()
 
 
 @router.post("/translate", response_model=TranslateResponse)
@@ -277,14 +321,14 @@ def _handle_ytdlp(
 ) -> TranslateResponse:
     """Handle TikTok/Instagram videos via yt-dlp (existing flow)."""
     try:
-        duration_seconds = fetch_video_duration_seconds(url, proxy=settings.warp_proxy_url or settings.proxy_url)
+        duration_seconds = _call_ytdlp_with_retry(
+            lambda: fetch_video_duration_seconds(url, proxy=settings.warp_proxy_url or settings.proxy_url),
+            settings=settings,
+        )
     except Exception as exc:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "detail": "Video metadata lookup failed",
-                "error": str(exc),
-            },
+        return _platform_error(
+            "Could not access this video. It may be private or unavailable.",
+            "platform_access_failed",
         )
     duration_result = check_duration(duration_seconds)
 
@@ -298,7 +342,16 @@ def _handle_ytdlp(
             },
         )
 
-    subtitles = fetch_existing_subtitles(url, proxy=settings.warp_proxy_url or settings.proxy_url)
+    try:
+        subtitles = _call_ytdlp_with_retry(
+            lambda: fetch_existing_subtitles(url, proxy=settings.warp_proxy_url or settings.proxy_url),
+            settings=settings,
+        )
+    except Exception:
+        return _platform_error(
+            "Could not access this video. It may be private or unavailable.",
+            "platform_access_failed",
+        )
     if subtitles is not None:
         translation_result = translate_subtitles_with_metadata(
             subtitles,
@@ -331,17 +384,20 @@ def _handle_ytdlp(
     try:
         audio_path = extract_audio(url, video_id, proxy=settings.warp_proxy_url or settings.proxy_url)
         transcription_result = transcribe_audio_with_metadata(audio_path)
-    except Exception as exc:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "detail": "Transcription pipeline failed",
-                "error": str(exc),
-            },
+    except Exception:
+        return _platform_error(
+            "Could not extract audio from this video.",
+            "audio_extraction_failed",
         )
     finally:
         if audio_path:
             cleanup_audio(audio_path)
+
+    if not transcription_result["segments"]:
+        return _platform_error(
+            "No speech detected in this video.",
+            "no_speech_detected",
+        )
 
     translation_result = translate_subtitles_with_metadata(
         transcription_result["segments"],
@@ -366,6 +422,12 @@ def _handle_ytdlp(
         translation_status=translation_result["translation_status"]
         if isinstance(translation_result, dict)
         else translation_result.translation_status,
+        exports=_build_transcript_exports(
+            segments=list(transcription_result["segments"]),
+            platform=platform,
+            video_id=video_id,
+            language=transcription_result.get("language"),
+        ),
     )
     counter.increment(video_id, target_lang)
     if counter.should_cache(video_id, target_lang):

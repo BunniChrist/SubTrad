@@ -83,6 +83,7 @@ def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch) ->
         "target_lang": "fr",
         "detected_language": "en",
         "translation_status": "translated",
+        "exports": None,
     }
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 

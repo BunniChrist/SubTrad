@@ -24,3 +24,4 @@ class TranslateResponse(BaseModel):
     target_lang: str
     detected_language: str | None = None
     translation_status: str = "translated"
+    exports: dict[str, str] | None = None

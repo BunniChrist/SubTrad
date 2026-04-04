@@ -200,6 +200,7 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
         "target_lang": "fr",
         "detected_language": "en",
         "translation_status": "translated",
+        "exports": None,
     }
 
 
@@ -361,10 +362,10 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
         },
     )
 
-    assert response.status_code == 502
+    assert response.status_code == 422
     assert response.json() == {
-        "detail": "Transcription pipeline failed",
-        "error": "Whisper API unavailable",
+        "detail": "Could not extract audio from this video.",
+        "error_code": "audio_extraction_failed",
     }
 
 
