@@ -1,10 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
+    from backend.api_errors import ApiError
     from backend.routers.leads import router as leads_router
     from backend.routers.translate import router as translate_router
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
+    from api_errors import ApiError
     from routers.leads import router as leads_router
     from routers.translate import router as translate_router
 
@@ -18,6 +21,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(ApiError)
+async def handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.detail)
 
 
 @app.get("/api/health")

@@ -1,5 +1,8 @@
 import json
 
+import pytest
+from fastapi import HTTPException
+
 
 class FakeSubtitleCache:
     def retrieve(self, video_id: str, target_lang: str):
@@ -83,12 +86,25 @@ def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch) ->
         "target_lang": "fr",
         "detected_language": "en",
         "translation_status": "translated",
-        "exports": None,
+        "exports": {
+            "vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello\n",
+            "txt": "Hello",
+            "md": (
+                "---\n"
+                "title: youtube-dQw4w9WgXcQ\n"
+                "platform: youtube\n"
+                "video_id: dQw4w9WgXcQ\n"
+                "language: en\n"
+                "date: 2026-04-04\n"
+                "---\n\n"
+                "[00:00] Hello"
+            ),
+        },
     }
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 
 
-def test_youtube_whisper_fallback_returns_502_on_failure(monkeypatch) -> None:
+def test_youtube_whisper_fallback_raises_http_exception_on_failure(monkeypatch) -> None:
     from backend.routers import translate
 
     cleanup_calls: list[str] = []
@@ -120,16 +136,17 @@ def test_youtube_whisper_fallback_returns_502_on_failure(monkeypatch) -> None:
         lambda audio_path: cleanup_calls.append(audio_path),
     )
 
-    response = translate._handle_youtube(
-        video_id="dQw4w9WgXcQ",
-        target_lang="fr",
-        settings=settings,
-        cache=FakeSubtitleCache(),
-        counter=FakeRequestCounter(),
-    )
+    with pytest.raises(HTTPException) as exc_info:
+        translate._handle_youtube(
+            video_id="dQw4w9WgXcQ",
+            target_lang="fr",
+            settings=settings,
+            cache=FakeSubtitleCache(),
+            counter=FakeRequestCounter(),
+        )
 
-    assert response.status_code == 502
-    assert json.loads(response.body) == {
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == {
         "detail": "Transcription pipeline failed",
         "error": "Whisper API unavailable",
     }
@@ -164,6 +181,80 @@ def test_youtube_whisper_fallback_cleans_up_audio_when_extraction_fails(monkeypa
         lambda audio_path: cleanup_calls.append(audio_path),
     )
 
+    with pytest.raises(HTTPException) as exc_info:
+        translate._handle_youtube(
+            video_id="dQw4w9WgXcQ",
+            target_lang="fr",
+            settings=settings,
+            cache=FakeSubtitleCache(),
+            counter=FakeRequestCounter(),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == {
+        "detail": "Transcription pipeline failed",
+        "error": "Audio extraction failed",
+    }
+    assert cleanup_calls == ["extract:dQw4w9WgXcQ"]
+
+
+def test_youtube_raises_http_exception_when_duration_key_is_missing(monkeypatch) -> None:
+    from backend.routers import translate
+
+    settings = translate.get_settings().model_copy(update={"openai_api_key": "test-openai-key"})
+
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"title": "Broken payload"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        translate._handle_youtube(
+            video_id="dQw4w9WgXcQ",
+            target_lang="fr",
+            settings=settings,
+            cache=FakeSubtitleCache(),
+            counter=FakeRequestCounter(),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == {
+        "detail": "Video metadata lookup failed",
+        "error": "Missing video duration",
+    }
+
+
+def test_youtube_handles_polymorphic_translation_result_objects(monkeypatch) -> None:
+    from backend.routers import translate
+
+    settings = translate.get_settings().model_copy(update={"openai_api_key": "test-openai-key"})
+
+    class TranslationResult:
+        def __init__(self) -> None:
+            self.segments = [{"start": 0.0, "end": 1.5, "text": "Bonjour"}]
+            self.detected_language = "en"
+            self.translation_status = "translated"
+
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "No Subs"},
+    )
+    monkeypatch.setattr(translate, "fetch_captions_via_api", lambda video_id, target_lang, api_key, **kwargs: None)
+    monkeypatch.setattr(
+        translate,
+        "extract_audio",
+        lambda url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path: {"segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}], "language": "en"},
+    )
+    monkeypatch.setattr(translate, "translate_subtitles_with_metadata", lambda *args, **kwargs: TranslationResult())
+    monkeypatch.setattr(translate, "cleanup_audio", lambda audio_path: None)
+
     response = translate._handle_youtube(
         video_id="dQw4w9WgXcQ",
         target_lang="fr",
@@ -172,9 +263,4 @@ def test_youtube_whisper_fallback_cleans_up_audio_when_extraction_fails(monkeypa
         counter=FakeRequestCounter(),
     )
 
-    assert response.status_code == 502
-    assert json.loads(response.body) == {
-        "detail": "Transcription pipeline failed",
-        "error": "Audio extraction failed",
-    }
-    assert cleanup_calls == ["extract:dQw4w9WgXcQ"]
+    assert response.model_dump()["subtitles"] == [{"start": 0.0, "end": 1.5, "text": "Bonjour"}]

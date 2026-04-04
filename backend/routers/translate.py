@@ -4,10 +4,10 @@ from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 from yt_dlp import YoutubeDL
 
 try:
+    from backend.api_errors import ApiError
     from backend.config import get_settings
     from backend.export_formats import to_md, to_txt, to_vtt
     from backend.models import TranslateRequest, TranslateResponse
@@ -26,6 +26,7 @@ try:
         get_video_info,
     )
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
+    from api_errors import ApiError
     from config import get_settings
     from export_formats import to_md, to_txt, to_vtt
     from models import TranslateRequest, TranslateResponse
@@ -115,7 +116,11 @@ def _build_transcript_exports(
 
 
 def _platform_error(detail: str, error_code: str, status_code: int = 422) -> JSONResponse:
-    return JSONResponse(status_code=status_code, content={"detail": detail, "error_code": error_code})
+    raise ApiError(status_code=status_code, content={"detail": detail, "error_code": error_code})
+
+
+def _response_error(status_code: int, detail: str, error: str) -> None:
+    raise ApiError(status_code=status_code, content={"detail": detail, "error": error})
 
 
 def _call_ytdlp_with_retry(operation, *, settings):
@@ -125,9 +130,50 @@ def _call_ytdlp_with_retry(operation, *, settings):
         if not is_youtube_block(exc):
             raise
         rotation_url = settings.warp_rotation_url
-        if not rotation_url or not rotate_warp_ip(rotation_url):
-            raise
+        if rotation_url:
+            rotate_warp_ip(rotation_url)
         return operation()
+
+
+def _extract_segments(payload: object) -> list[dict[str, float | str]]:
+    if isinstance(payload, dict):
+        segments = payload.get("segments")
+    else:
+        segments = getattr(payload, "segments", None)
+    if not isinstance(segments, list):
+        return []
+    return [segment for segment in segments if isinstance(segment, dict)]
+
+
+def _extract_language(payload: object) -> str | None:
+    if isinstance(payload, dict):
+        language = payload.get("language")
+    else:
+        language = getattr(payload, "language", None)
+    return str(language) if language is not None else None
+
+
+def _translation_value(payload: object, key: str, default: object = None) -> object:
+    if isinstance(payload, dict):
+        return payload.get(key, default)
+    return getattr(payload, key, default)
+
+
+def _translation_segments(payload: object) -> list[dict[str, object]]:
+    segments = _translation_value(payload, "segments", [])
+    if not isinstance(segments, list):
+        return []
+    return [segment for segment in segments if isinstance(segment, dict)]
+
+
+def _translation_detected_language(payload: object) -> str | None:
+    value = _translation_value(payload, "detected_language")
+    return str(value) if value is not None else None
+
+
+def _translation_status(payload: object) -> str:
+    value = _translation_value(payload, "translation_status", "translated")
+    return str(value)
 
 
 @router.post("/translate", response_model=TranslateResponse)
@@ -187,28 +233,19 @@ def _handle_youtube(
     try:
         info = get_video_info(video_id, settings.youtube_api_key)
     except Exception as exc:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "detail": "Video metadata lookup failed",
-                "error": str(exc),
-            },
-        )
+        _response_error(502, "Video metadata lookup failed", str(exc))
 
     if info is None:
-        return JSONResponse(
-            status_code=502,
-            content={
-                "detail": "Video metadata lookup failed",
-                "error": "Video not found",
-            },
-        )
+        _response_error(502, "Video metadata lookup failed", "Video not found")
 
-    duration_seconds = info["duration_seconds"]
+    duration_value = info.get("duration_seconds") if isinstance(info, dict) else getattr(info, "duration_seconds", None)
+    if not isinstance(duration_value, int):
+        _response_error(502, "Video metadata lookup failed", "Missing video duration")
+    duration_seconds = duration_value
     duration_result = check_duration(duration_seconds)
 
     if not duration_result.allowed:
-        return JSONResponse(
+        raise ApiError(
             status_code=403,
             content={
                 "detail": "Video exceeds maximum duration",
@@ -240,40 +277,35 @@ def _handle_youtube(
             )
             transcription_result = transcribe_audio_with_metadata(audio_path)
         except Exception as exc:
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "detail": "Transcription pipeline failed",
-                    "error": str(exc),
-                },
-            )
+            _response_error(502, "Transcription pipeline failed", str(exc))
         finally:
             if audio_path:
                 cleanup_audio(audio_path)
 
+        transcription_segments = _extract_segments(transcription_result)
         translation_result = translate_subtitles_with_metadata(
-            transcription_result["segments"],
+            transcription_segments,
             target_lang,
             settings.openai_api_key,
-            source_lang=transcription_result.get("language"),
+            source_lang=_extract_language(transcription_result),
         )
 
         response = build_translate_response(
             platform="youtube",
             video_id=video_id,
-            subtitles=translation_result["segments"]
-            if isinstance(translation_result, dict)
-            else translation_result.segments,
+            subtitles=_translation_segments(translation_result),
             duration_seconds=duration_result.duration_seconds,
             needs_transcription=True,
             source="whisper_transcription",
             target_lang=target_lang,
-            detected_language=translation_result["detected_language"]
-            if isinstance(translation_result, dict)
-            else translation_result.detected_language,
-            translation_status=translation_result["translation_status"]
-            if isinstance(translation_result, dict)
-            else translation_result.translation_status,
+            detected_language=_translation_detected_language(translation_result),
+            translation_status=_translation_status(translation_result),
+            exports=_build_transcript_exports(
+                segments=transcription_segments,
+                platform="youtube",
+                video_id=video_id,
+                language=_extract_language(transcription_result),
+            ),
         )
         counter.increment(video_id, target_lang)
         if counter.should_cache(video_id, target_lang):
@@ -289,19 +321,13 @@ def _handle_youtube(
     response = build_translate_response(
         platform="youtube",
         video_id=video_id,
-        subtitles=translation_result["segments"]
-        if isinstance(translation_result, dict)
-        else translation_result.segments,
+        subtitles=_translation_segments(translation_result),
         duration_seconds=duration_result.duration_seconds,
         needs_transcription=False,
         source=subtitle_source,
         target_lang=target_lang,
-        detected_language=translation_result["detected_language"]
-        if isinstance(translation_result, dict)
-        else translation_result.detected_language,
-        translation_status=translation_result["translation_status"]
-        if isinstance(translation_result, dict)
-        else translation_result.translation_status,
+        detected_language=_translation_detected_language(translation_result),
+        translation_status=_translation_status(translation_result),
     )
     counter.increment(video_id, target_lang)
     if counter.should_cache(video_id, target_lang):
@@ -325,15 +351,15 @@ def _handle_ytdlp(
             lambda: fetch_video_duration_seconds(url, proxy=settings.warp_proxy_url or settings.proxy_url),
             settings=settings,
         )
-    except Exception as exc:
-        return _platform_error(
+    except Exception:
+        _platform_error(
             "Could not access this video. It may be private or unavailable.",
             "platform_access_failed",
         )
     duration_result = check_duration(duration_seconds)
 
     if not duration_result.allowed:
-        return JSONResponse(
+        raise ApiError(
             status_code=403,
             content={
                 "detail": "Video exceeds maximum duration",
@@ -348,7 +374,7 @@ def _handle_ytdlp(
             settings=settings,
         )
     except Exception:
-        return _platform_error(
+        _platform_error(
             "Could not access this video. It may be private or unavailable.",
             "platform_access_failed",
         )
@@ -361,19 +387,13 @@ def _handle_ytdlp(
         response = build_translate_response(
             platform=platform,
             video_id=video_id,
-            subtitles=translation_result["segments"]
-            if isinstance(translation_result, dict)
-            else translation_result.segments,
+            subtitles=_translation_segments(translation_result),
             duration_seconds=duration_result.duration_seconds,
             needs_transcription=False,
             source="existing_captions",
             target_lang=target_lang,
-            detected_language=translation_result["detected_language"]
-            if isinstance(translation_result, dict)
-            else translation_result.detected_language,
-            translation_status=translation_result["translation_status"]
-            if isinstance(translation_result, dict)
-            else translation_result.translation_status,
+            detected_language=_translation_detected_language(translation_result),
+            translation_status=_translation_status(translation_result),
         )
         counter.increment(video_id, target_lang)
         if counter.should_cache(video_id, target_lang):
@@ -385,7 +405,7 @@ def _handle_ytdlp(
         audio_path = extract_audio(url, video_id, proxy=settings.warp_proxy_url or settings.proxy_url)
         transcription_result = transcribe_audio_with_metadata(audio_path)
     except Exception:
-        return _platform_error(
+        _platform_error(
             "Could not extract audio from this video.",
             "audio_extraction_failed",
         )
@@ -393,40 +413,35 @@ def _handle_ytdlp(
         if audio_path:
             cleanup_audio(audio_path)
 
-    if not transcription_result["segments"]:
-        return _platform_error(
+    transcription_segments = _extract_segments(transcription_result)
+    if not transcription_segments:
+        _platform_error(
             "No speech detected in this video.",
             "no_speech_detected",
         )
 
     translation_result = translate_subtitles_with_metadata(
-        transcription_result["segments"],
+        transcription_segments,
         target_lang,
         settings.openai_api_key,
-        source_lang=transcription_result.get("language"),
+        source_lang=_extract_language(transcription_result),
     )
 
     response = build_translate_response(
         platform=platform,
         video_id=video_id,
-        subtitles=translation_result["segments"]
-        if isinstance(translation_result, dict)
-        else translation_result.segments,
+        subtitles=_translation_segments(translation_result),
         duration_seconds=duration_result.duration_seconds,
         needs_transcription=True,
         source="whisper_transcription",
         target_lang=target_lang,
-        detected_language=translation_result["detected_language"]
-        if isinstance(translation_result, dict)
-        else translation_result.detected_language,
-        translation_status=translation_result["translation_status"]
-        if isinstance(translation_result, dict)
-        else translation_result.translation_status,
+        detected_language=_translation_detected_language(translation_result),
+        translation_status=_translation_status(translation_result),
         exports=_build_transcript_exports(
-            segments=list(transcription_result["segments"]),
+            segments=transcription_segments,
             platform=platform,
             video_id=video_id,
-            language=transcription_result.get("language"),
+            language=_extract_language(transcription_result),
         ),
     )
     counter.increment(video_id, target_lang)

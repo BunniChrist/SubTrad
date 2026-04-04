@@ -104,6 +104,26 @@ def test_ytdlp_returns_422_when_audio_extraction_fails(monkeypatch, platform: st
 
 
 @pytest.mark.parametrize(("platform", "url"), PLATFORM_CASES)
+def test_ytdlp_handles_missing_segments_payload_without_crashing(monkeypatch, platform: str, url: str) -> None:
+    from backend.routers import translate
+
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda candidate_url, proxy="": 120)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda candidate_url, proxy="": None)
+    monkeypatch.setattr(
+        translate,
+        "extract_audio",
+        lambda candidate_url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+    )
+    monkeypatch.setattr(translate, "transcribe_audio_with_metadata", lambda audio_path: {"language": "en"})
+    monkeypatch.setattr(translate, "cleanup_audio", lambda audio_path: None)
+
+    response = client.post("/api/translate", json={"url": url, "target_lang": "fr"})
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "no_speech_detected"
+
+
+@pytest.mark.parametrize(("platform", "url"), PLATFORM_CASES)
 def test_ytdlp_returns_403_for_videos_exceeding_duration_limit(monkeypatch, platform: str, url: str) -> None:
     from backend.routers import translate
 
@@ -280,6 +300,67 @@ def test_ytdlp_rotates_warp_and_retries_after_blocked_duration_lookup(
         translate,
         "rotate_warp_ip",
         lambda rotation_url: rotation_calls.append(rotation_url) or True,
+    )
+
+    response = client.post("/api/translate", json={"url": url, "target_lang": "fr"})
+
+    assert response.status_code == 200
+    assert duration_attempts == [url, url]
+    assert rotation_calls == ["http://10.0.1.1:40002/rotate"]
+
+
+@pytest.mark.parametrize(("platform", "url"), PLATFORM_CASES)
+def test_ytdlp_retries_even_when_warp_rotation_fails(monkeypatch, platform: str, url: str) -> None:
+    from backend.routers import translate
+
+    duration_attempts: list[str] = []
+    rotation_calls: list[str] = []
+
+    def fake_duration(candidate_url: str, proxy: str = "") -> int:
+        duration_attempts.append(candidate_url)
+        if len(duration_attempts) == 1:
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
+        return 44
+
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", fake_duration)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda candidate_url, proxy="": None)
+    monkeypatch.setattr(
+        translate,
+        "extract_audio",
+        lambda candidate_url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path: {"segments": [{"start": 0.0, "end": 1.0, "text": "hello"}], "language": "en"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": subtitles,
+            "detected_language": "en",
+            "translation_status": "translated",
+        },
+    )
+    monkeypatch.setattr(translate, "cleanup_audio", lambda audio_path: None)
+    monkeypatch.setattr(
+        translate,
+        "get_settings",
+        lambda: SimpleNamespace(
+            supported_languages=["fr", "es", "en", "ja"],
+            cache_db_path="data/cache.db",
+            cache_threshold=100,
+            warp_proxy_url="",
+            proxy_url="",
+            warp_rotation_url="http://10.0.1.1:40002/rotate",
+            openai_api_key="test-key",
+        ),
+    )
+    monkeypatch.setattr(
+        translate,
+        "rotate_warp_ip",
+        lambda rotation_url: rotation_calls.append(rotation_url) or False,
     )
 
     response = client.post("/api/translate", json={"url": url, "target_lang": "fr"})
