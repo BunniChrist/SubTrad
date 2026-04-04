@@ -64,3 +64,15 @@ def test_export_formats_return_empty_outputs_for_empty_segments() -> None:
     assert to_md([], metadata={"platform": "tiktok"}) == (
         "---\nplatform: tiktok\n---\n"
     )
+
+
+def test_export_formats_preserve_special_characters_and_emoji() -> None:
+    segments = [{"start": 0.0, "end": 1.5, "text": "Cafe deja vu ☕️🔥"}]
+
+    assert to_vtt(segments) == (
+        "WEBVTT\n\n"
+        "00:00:00.000 --> 00:00:01.500\n"
+        "Cafe deja vu ☕️🔥\n"
+    )
+    assert to_txt(segments) == "Cafe deja vu ☕️🔥"
+    assert "Cafe deja vu ☕️🔥" in to_md(segments, metadata={"platform": "instagram"})

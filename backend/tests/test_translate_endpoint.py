@@ -291,8 +291,9 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
         translate,
         "transcribe_audio_with_metadata",
         lambda audio_path: {
-            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello world"}],
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello world 😀"}],
             "language": "en",
+            "timings": {"preprocess_seconds": 0.11, "transcription_seconds": 0.42},
         },
     )
     monkeypatch.setattr(
@@ -325,6 +326,20 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
     assert data["needs_transcription"] is True
     assert data["source"] == "whisper_transcription"
     assert data["translation_status"] == "translated"
+    assert data["exports"] == {
+        "vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello world 😀\n",
+        "txt": "Hello world 😀",
+        "md": (
+            "---\n"
+            "title: tiktok-1234567890\n"
+            "platform: tiktok\n"
+            "video_id: 1234567890\n"
+            "language: en\n"
+            "date: 2026-04-04\n"
+            "---\n\n"
+            "[00:00] Hello world 😀"
+        ),
+    }
 
 
 def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> None:
@@ -662,6 +677,7 @@ def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
         lambda audio_path: {
             "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
             "language": "en",
+            "timings": {"preprocess_seconds": 0.12, "transcription_seconds": 0.41},
         },
     )
     monkeypatch.setattr(
@@ -691,6 +707,20 @@ def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
     data = response.json()
     assert data["source"] == "whisper_transcription"
     assert data["needs_transcription"] is True
+    assert data["exports"] == {
+        "vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello\n",
+        "txt": "Hello",
+        "md": (
+            "---\n"
+            "title: youtube-dQw4w9WgXcQ\n"
+            "platform: youtube\n"
+            "video_id: dQw4w9WgXcQ\n"
+            "language: en\n"
+            "date: 2026-04-04\n"
+            "---\n\n"
+            "[00:00] Hello"
+        ),
+    }
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 
 
