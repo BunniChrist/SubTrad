@@ -1,4 +1,5 @@
 import json
+import logging
 
 import pytest
 from fastapi import HTTPException
@@ -24,11 +25,12 @@ class FakeRequestCounter:
         return False
 
 
-def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch) -> None:
+def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch, caplog) -> None:
     from backend.routers import translate
 
     cleanup_calls: list[str] = []
     settings = translate.get_settings().model_copy(update={"openai_api_key": "test-openai-key"})
+    caplog.set_level(logging.INFO)
 
     monkeypatch.setattr(
         translate,
@@ -49,15 +51,16 @@ def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch) ->
         translate,
         "transcribe_audio_with_metadata",
         lambda audio_path: {
-            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
+            "segments": [{"start": 0.0, "end": 2.5, "text": "Hello there"}],
             "language": "en",
+            "timings": {"preprocess_seconds": 0.12, "transcription_seconds": 0.48},
         },
     )
     monkeypatch.setattr(
         translate,
         "translate_subtitles_with_metadata",
         lambda subtitles, target_lang, api_key, source_lang=None: {
-            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+            "segments": [{"start": 0.0, "end": 2.5, "text": "Bonjour"}],
             "detected_language": source_lang,
             "translation_status": "translated",
         },
@@ -79,7 +82,7 @@ def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch) ->
     assert response.model_dump() == {
         "platform": "youtube",
         "video_id": "dQw4w9WgXcQ",
-        "subtitles": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+        "subtitles": [{"start": 0.0, "end": 2.5, "text": "Bonjour"}],
         "duration_seconds": 120,
         "needs_transcription": True,
         "source": "whisper_transcription",
@@ -87,8 +90,8 @@ def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch) ->
         "detected_language": "en",
         "translation_status": "translated",
         "exports": {
-            "vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.500\nHello\n",
-            "txt": "Hello",
+            "vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:02.500\nHello there\n",
+            "txt": "Hello there",
             "md": (
                 "---\n"
                 "title: youtube-dQw4w9WgXcQ\n"
@@ -97,11 +100,15 @@ def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch) ->
                 "language: en\n"
                 "date: 2026-04-04\n"
                 "---\n\n"
-                "[00:00] Hello"
+                "[00:00] Hello there"
             ),
         },
     }
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
+    assert "download_seconds" in caplog.text
+    assert "preprocess_seconds" in caplog.text
+    assert "transcription_seconds" in caplog.text
+    assert "total_seconds" in caplog.text
 
 
 def test_youtube_whisper_fallback_raises_http_exception_on_failure(monkeypatch) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import time
 from datetime import date
 from pathlib import Path
 
@@ -48,6 +50,7 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
 
 router = APIRouter(prefix="/api", tags=["translate"])
 YOUTUBE_COOKIE_FILE = Path("/root/yt_cookies.txt")
+logger = logging.getLogger(__name__)
 
 
 def fetch_video_duration_seconds(url: str, proxy: str = "") -> int:
@@ -176,6 +179,96 @@ def _translation_status(payload: object) -> str:
     return str(value)
 
 
+def _timing_value(payload: object, key: str) -> float:
+    if not isinstance(payload, dict):
+        return 0.0
+    timings = payload.get("timings")
+    if not isinstance(timings, dict):
+        return 0.0
+    value = timings.get(key, 0.0)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _run_whisper_fallback(
+    *,
+    audio_source_url: str,
+    platform: str,
+    video_id: str,
+    target_lang: str,
+    duration_seconds: int,
+    settings,
+    cache: SubtitleCache,
+    counter: RequestCounter,
+) -> TranslateResponse:
+    audio_path = ""
+    total_started_at = time.perf_counter()
+    download_started_at = total_started_at
+
+    try:
+        audio_path = extract_audio(
+            audio_source_url,
+            video_id,
+            proxy=settings.warp_proxy_url or settings.proxy_url,
+        )
+        download_elapsed = time.perf_counter() - download_started_at
+        transcription_result = transcribe_audio_with_metadata(audio_path)
+    finally:
+        if audio_path:
+            cleanup_audio(audio_path)
+
+    transcription_segments = _extract_segments(transcription_result)
+    if not transcription_segments:
+        _platform_error(
+            "No speech detected in this video.",
+            "no_speech_detected",
+        )
+
+    preprocess_elapsed = _timing_value(transcription_result, "preprocess_seconds")
+    transcription_elapsed = _timing_value(transcription_result, "transcription_seconds")
+    total_elapsed = time.perf_counter() - total_started_at
+    logger.info(
+        "Whisper fallback timings platform=%s video_id=%s download_seconds=%.3f preprocess_seconds=%.3f transcription_seconds=%.3f total_seconds=%.3f",
+        platform,
+        video_id,
+        download_elapsed,
+        preprocess_elapsed,
+        transcription_elapsed,
+        total_elapsed,
+    )
+
+    translation_result = translate_subtitles_with_metadata(
+        transcription_segments,
+        target_lang,
+        settings.openai_api_key,
+        source_lang=_extract_language(transcription_result),
+    )
+
+    response = build_translate_response(
+        platform=platform,
+        video_id=video_id,
+        subtitles=_translation_segments(translation_result),
+        duration_seconds=duration_seconds,
+        needs_transcription=True,
+        source="whisper_transcription",
+        target_lang=target_lang,
+        detected_language=_translation_detected_language(translation_result),
+        translation_status=_translation_status(translation_result),
+        exports=_build_transcript_exports(
+            segments=transcription_segments,
+            platform=platform,
+            video_id=video_id,
+            language=_extract_language(transcription_result),
+        ),
+    )
+    counter.increment(video_id, target_lang)
+    if counter.should_cache(video_id, target_lang):
+        cache.store(video_id, target_lang, response.model_dump())
+    return response
+
+
 @router.post("/translate", response_model=TranslateResponse)
 def translate_video(request: TranslateRequest) -> TranslateResponse:
     settings = get_settings()
@@ -268,49 +361,21 @@ def _handle_youtube(
         subtitles = subtitles_result
 
     if subtitles is None:
-        audio_path = ""
         try:
-            audio_path = extract_audio(
-                f"https://www.youtube.com/watch?v={video_id}",
-                video_id,
-                proxy=settings.warp_proxy_url or settings.proxy_url,
-            )
-            transcription_result = transcribe_audio_with_metadata(audio_path)
-        except Exception as exc:
-            _response_error(502, "Transcription pipeline failed", str(exc))
-        finally:
-            if audio_path:
-                cleanup_audio(audio_path)
-
-        transcription_segments = _extract_segments(transcription_result)
-        translation_result = translate_subtitles_with_metadata(
-            transcription_segments,
-            target_lang,
-            settings.openai_api_key,
-            source_lang=_extract_language(transcription_result),
-        )
-
-        response = build_translate_response(
-            platform="youtube",
-            video_id=video_id,
-            subtitles=_translation_segments(translation_result),
-            duration_seconds=duration_result.duration_seconds,
-            needs_transcription=True,
-            source="whisper_transcription",
-            target_lang=target_lang,
-            detected_language=_translation_detected_language(translation_result),
-            translation_status=_translation_status(translation_result),
-            exports=_build_transcript_exports(
-                segments=transcription_segments,
+            return _run_whisper_fallback(
+                audio_source_url=f"https://www.youtube.com/watch?v={video_id}",
                 platform="youtube",
                 video_id=video_id,
-                language=_extract_language(transcription_result),
-            ),
-        )
-        counter.increment(video_id, target_lang)
-        if counter.should_cache(video_id, target_lang):
-            cache.store(video_id, target_lang, response.model_dump())
-        return response
+                target_lang=target_lang,
+                duration_seconds=duration_result.duration_seconds,
+                settings=settings,
+                cache=cache,
+                counter=counter,
+            )
+        except ApiError:
+            raise
+        except Exception as exc:
+            _response_error(502, "Transcription pipeline failed", str(exc))
 
     translation_result = translate_subtitles_with_metadata(
         subtitles,
@@ -400,51 +465,21 @@ def _handle_ytdlp(
             cache.store(video_id, target_lang, response.model_dump())
         return response
 
-    audio_path = ""
     try:
-        audio_path = extract_audio(url, video_id, proxy=settings.warp_proxy_url or settings.proxy_url)
-        transcription_result = transcribe_audio_with_metadata(audio_path)
+        return _run_whisper_fallback(
+            audio_source_url=url,
+            platform=platform,
+            video_id=video_id,
+            target_lang=target_lang,
+            duration_seconds=duration_result.duration_seconds,
+            settings=settings,
+            cache=cache,
+            counter=counter,
+        )
+    except ApiError:
+        raise
     except Exception:
         _platform_error(
             "Could not extract audio from this video.",
             "audio_extraction_failed",
         )
-    finally:
-        if audio_path:
-            cleanup_audio(audio_path)
-
-    transcription_segments = _extract_segments(transcription_result)
-    if not transcription_segments:
-        _platform_error(
-            "No speech detected in this video.",
-            "no_speech_detected",
-        )
-
-    translation_result = translate_subtitles_with_metadata(
-        transcription_segments,
-        target_lang,
-        settings.openai_api_key,
-        source_lang=_extract_language(transcription_result),
-    )
-
-    response = build_translate_response(
-        platform=platform,
-        video_id=video_id,
-        subtitles=_translation_segments(translation_result),
-        duration_seconds=duration_result.duration_seconds,
-        needs_transcription=True,
-        source="whisper_transcription",
-        target_lang=target_lang,
-        detected_language=_translation_detected_language(translation_result),
-        translation_status=_translation_status(translation_result),
-        exports=_build_transcript_exports(
-            segments=transcription_segments,
-            platform=platform,
-            video_id=video_id,
-            language=_extract_language(transcription_result),
-        ),
-    )
-    counter.increment(video_id, target_lang)
-    if counter.should_cache(video_id, target_lang):
-        cache.store(video_id, target_lang, response.model_dump())
-    return response

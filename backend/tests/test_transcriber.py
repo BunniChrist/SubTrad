@@ -174,6 +174,7 @@ def test_transcribe_audio_with_metadata_returns_detected_language(
     assert payload == {
         "segments": [{"start": 0.0, "end": 2.5, "text": "Bonjour le monde"}],
         "language": "fr",
+        "timings": {"preprocess_seconds": 0.0, "transcription_seconds": 0.0},
     }
 
 
@@ -259,4 +260,27 @@ def test_transcribe_audio_cleans_segments_before_returning(monkeypatch, tmp_path
     assert payload == {
         "segments": [{"start": 0.8, "end": 1.5, "text": "Hello"}],
         "language": "en",
+        "timings": {"preprocess_seconds": 0.0, "transcription_seconds": 0.0},
     }
+
+
+def test_transcribe_audio_with_metadata_returns_timing_breakdown(monkeypatch, tmp_path) -> None:
+    from backend.services import transcriber
+
+    audio_file = tmp_path / "audio.mp3"
+    audio_file.write_bytes(b"fake-audio" * 256)
+    preprocessed_file = tmp_path / "audio.preprocessed.wav"
+    preprocessed_file.write_bytes(b"processed-audio" * 256)
+    perf_counter_values = iter([10.0, 10.2, 10.2, 10.7])
+
+    class TimingModel:
+        def transcribe(self, audio_path: str, **kwargs):
+            return iter([FakeSegment(0.0, 1.0, "Hello.")]), FakeInfo("en")
+
+    monkeypatch.setattr(transcriber, "_get_model", lambda: TimingModel())
+    monkeypatch.setattr(transcriber, "preprocess_audio", lambda audio_path: str(preprocessed_file))
+    monkeypatch.setattr(transcriber.time, "perf_counter", lambda: next(perf_counter_values))
+
+    payload = transcribe_audio_with_metadata(str(audio_file), source_lang="en")
+
+    assert payload["timings"] == {"preprocess_seconds": 0.2, "transcription_seconds": 0.5}

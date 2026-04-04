@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -80,6 +81,48 @@ def test_ytdlp_happy_path_returns_transcript_exports(monkeypatch, platform: str,
             "source_lang": "en",
         }
     ]
+
+
+@pytest.mark.parametrize(("platform", "url"), PLATFORM_CASES)
+def test_ytdlp_logs_whisper_timing_breakdown(monkeypatch, caplog, platform: str, url: str) -> None:
+    from backend.routers import translate
+
+    caplog.set_level(logging.INFO)
+
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda candidate_url, proxy="": 120)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda candidate_url, proxy="": None)
+    monkeypatch.setattr(
+        translate,
+        "extract_audio",
+        lambda candidate_url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
+            "language": "en",
+            "timings": {"preprocess_seconds": 0.11, "transcription_seconds": 0.42},
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+            "detected_language": "en",
+            "translation_status": "translated",
+        },
+    )
+    monkeypatch.setattr(translate, "cleanup_audio", lambda audio_path: None)
+
+    response = client.post("/api/translate", json={"url": url, "target_lang": "fr"})
+
+    assert response.status_code == 200
+    assert "download_seconds" in caplog.text
+    assert "preprocess_seconds" in caplog.text
+    assert "transcription_seconds" in caplog.text
+    assert "total_seconds" in caplog.text
 
 
 @pytest.mark.parametrize(("platform", "url"), PLATFORM_CASES)

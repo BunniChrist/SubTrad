@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 try:
@@ -66,10 +67,13 @@ def transcribe_audio_with_metadata(
     if not path.exists() or path.stat().st_size == 0:
         return {"segments": [], "language": None}
     _validate_audio_file(path)
+    preprocess_started_at = time.perf_counter()
     prepared_audio_path = preprocess_audio(str(path))
+    preprocess_elapsed = time.perf_counter() - preprocess_started_at
     model = _get_model()
 
     try:
+        transcription_started_at = time.perf_counter()
         if source_lang:
             segments, info = model.transcribe(
                 prepared_audio_path,
@@ -91,6 +95,7 @@ def transcribe_audio_with_metadata(
                 vad_filter=True,
                 language=detected_language,
             )
+        transcription_elapsed = time.perf_counter() - transcription_started_at
     except Exception as exc:
         raise ValueError(f"Invalid audio file: {path.name}") from exc
 
@@ -108,6 +113,10 @@ def transcribe_audio_with_metadata(
     return {
         "segments": cleaned_segments,
         "language": getattr(info, "language", None),
+        "timings": {
+            "preprocess_seconds": round(preprocess_elapsed, 3),
+            "transcription_seconds": round(transcription_elapsed, 3),
+        },
     }
 
 
