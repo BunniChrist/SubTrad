@@ -82,11 +82,18 @@ def translate_subtitles_with_metadata_codex(
 
     for start_index in range(0, len(segments), 20):
         batch = segments[start_index : start_index + 20]
+        # Flatten newlines inside segment text so the numbered-line format
+        # is not broken by multi-line subtitles (parse_translation_response
+        # splits on newlines).
+        flat_batch = [
+            {**seg, "text": str(seg.get("text", "")).replace("\n", " ")}
+            for seg in batch
+        ]
         previous_text = _get_context_text(segments, start_index - 1)
         next_text = _get_context_text(segments, start_index + len(batch))
         prompt = _build_batch_prompt(
             target_lang=target_lang,
-            batch=batch,
+            batch=flat_batch,
             previous_text=previous_text,
             next_text=next_text,
         )
@@ -96,8 +103,8 @@ def translate_subtitles_with_metadata_codex(
             translated_batch = list(batch)
             had_failure = True
         else:
-            translated_batch = parse_translation_response(output, batch)
-            if translated_batch == list(batch):
+            translated_batch = parse_translation_response(output, flat_batch)
+            if translated_batch == list(flat_batch):
                 had_failure = True
 
         translated_segments.extend(translated_batch)
