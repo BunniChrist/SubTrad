@@ -132,14 +132,16 @@ def _run_codex(prompt: str) -> str | None:
 def _parse_codex_output(raw: str) -> str | None:
     """Extract the response text from codex exec stdout.
 
-    The output format is:
+    Codex exec output varies between versions but always contains:
         codex
         <response>
+        [<response repeated>]
         tokens used
         <N>
-        <response repeated>
+        [<response repeated>]
 
-    We extract the text between the first 'codex' line and 'tokens used'.
+    Strategy: extract text between 'codex' and 'tokens used', then
+    de-duplicate by checking if the block is a repeated concatenation.
     """
     lines = raw.splitlines()
     start = None
@@ -147,14 +149,26 @@ def _parse_codex_output(raw: str) -> str | None:
     for i, line in enumerate(lines):
         if line.strip() == "codex" and start is None:
             start = i + 1
-        elif line.strip() == "tokens used" and start is not None:
+        elif line.strip() == "tokens used":
             end = i
             break
 
-    if start is None or end is None or start >= end:
+    if start is not None and end is not None and start < end:
+        content_lines = lines[start:end]
+    elif start is not None:
+        # 'tokens used' not found — take everything after 'codex'
+        content_lines = lines[start:]
+    else:
         return raw.strip() or None
 
-    return "\n".join(lines[start:end]).strip() or None
+    # De-duplicate: if content is even-length and first half == second half
+    n = len(content_lines)
+    if n >= 2 and n % 2 == 0:
+        half = n // 2
+        if content_lines[:half] == content_lines[half:]:
+            content_lines = content_lines[:half]
+
+    return "\n".join(content_lines).strip() or None
 
 
 def _build_batch_prompt(

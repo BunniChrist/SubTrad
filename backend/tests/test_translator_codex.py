@@ -142,6 +142,11 @@ def test_parse_codex_output_extracts_response() -> None:
     assert _parse_codex_output(raw) == "1|Bonjour\n2|Salut"
 
 
+def test_parse_codex_output_deduplicates_before_tokens_used() -> None:
+    raw = "codex\n1|Bonjour\n2|Salut\n1|Bonjour\n2|Salut\ntokens used\n8584"
+    assert _parse_codex_output(raw) == "1|Bonjour\n2|Salut"
+
+
 def test_parse_codex_output_handles_plain_text() -> None:
     assert _parse_codex_output("just plain text") == "just plain text"
 
