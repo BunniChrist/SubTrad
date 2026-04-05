@@ -114,9 +114,10 @@ def _run_codex(prompt: str) -> str | None:
 
     try:
         completed = subprocess.run(
-            ["codex", "exec", "-m", model, prompt],
+            ["codex", "exec", "--skip-git-repo-check", "-m", model, "-"],
             capture_output=True,
             text=True,
+            input=prompt,
             timeout=120,
         )
     except (OSError, subprocess.SubprocessError):
@@ -125,7 +126,35 @@ def _run_codex(prompt: str) -> str | None:
     if completed.returncode != 0:
         return None
 
-    return str(completed.stdout or "")
+    return _parse_codex_output(str(completed.stdout or ""))
+
+
+def _parse_codex_output(raw: str) -> str | None:
+    """Extract the response text from codex exec stdout.
+
+    The output format is:
+        codex
+        <response>
+        tokens used
+        <N>
+        <response repeated>
+
+    We extract the text between the first 'codex' line and 'tokens used'.
+    """
+    lines = raw.splitlines()
+    start = None
+    end = None
+    for i, line in enumerate(lines):
+        if line.strip() == "codex" and start is None:
+            start = i + 1
+        elif line.strip() == "tokens used" and start is not None:
+            end = i
+            break
+
+    if start is None or end is None or start >= end:
+        return raw.strip() or None
+
+    return "\n".join(lines[start:end]).strip() or None
 
 
 def _build_batch_prompt(
