@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     cache_db_path: str = DEFAULT_CACHE_DB_PATH
     supported_languages: list[str] = ["fr", "es", "en", "ja"]
     whisper_model: str = "distil-large-v3"
+    translation_backend: str = "openai"
+    codex_model: str = "gpt-4o-mini"
     openai_api_key: str = ""
     youtube_api_key: str = ""
     proxy_url: str = ""
