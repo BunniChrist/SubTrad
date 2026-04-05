@@ -205,6 +205,15 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
     }
 
 
+def test_translate_module_uses_dispatch_translation_backend() -> None:
+    from backend.routers import translate
+
+    assert (
+        translate.translate_subtitles_with_metadata.__module__
+        == "backend.services.translator_dispatch"
+    )
+
+
 def test_handle_youtube_passes_cookie_file_and_proxy_to_caption_fetch(monkeypatch, tmp_path) -> None:
     from backend.routers import translate
 

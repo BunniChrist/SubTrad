@@ -19,7 +19,9 @@ try:
     from backend.services.request_counter import RequestCounter
     from backend.services.subtitle_fetcher import fetch_existing_subtitles
     from backend.services.transcriber import transcribe_audio_with_metadata
-    from backend.services.translator import translate_subtitles_with_metadata
+    from backend.services.translator_dispatch import (
+        translate_subtitles_with_metadata_dispatch as translate_subtitles_with_metadata,
+    )
     from backend.services.url_validator import detect_platform, validate_url
     from backend.services.video_id import extract_video_id
     from backend.services.warp_rotator import is_youtube_block, rotate_warp_ip
@@ -38,7 +40,9 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
     from services.request_counter import RequestCounter
     from services.subtitle_fetcher import fetch_existing_subtitles
     from services.transcriber import transcribe_audio_with_metadata
-    from services.translator import translate_subtitles_with_metadata
+    from services.translator_dispatch import (
+        translate_subtitles_with_metadata_dispatch as translate_subtitles_with_metadata,
+    )
     from services.url_validator import detect_platform, validate_url
     from services.video_id import extract_video_id
     from services.warp_rotator import is_youtube_block, rotate_warp_ip
