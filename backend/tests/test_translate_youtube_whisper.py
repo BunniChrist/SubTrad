@@ -98,7 +98,7 @@ def test_youtube_uses_whisper_fallback_when_captions_are_missing(monkeypatch, ca
                 "platform: youtube\n"
                 "video_id: dQw4w9WgXcQ\n"
                 "language: en\n"
-                "date: 2026-04-04\n"
+                f"date: {__import__('datetime').date.today().isoformat()}\n"
                 "---\n\n"
                 "[00:00] Hello there"
             ),
@@ -197,10 +197,10 @@ def test_youtube_whisper_fallback_cleans_up_audio_when_extraction_fails(monkeypa
             counter=FakeRequestCounter(),
         )
 
-    assert exc_info.value.status_code == 500
+    assert exc_info.value.status_code == 422
     assert exc_info.value.detail == {
-        "detail": "Transcription pipeline failed.",
-        "error_code": "internal_error",
+        "detail": "Could not extract audio from this video.",
+        "error_code": "audio_extraction_failed",
     }
     assert cleanup_calls == ["extract:dQw4w9WgXcQ"]
 

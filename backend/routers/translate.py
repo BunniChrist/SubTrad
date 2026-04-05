@@ -213,7 +213,14 @@ def _run_whisper_fallback(
             video_id,
             proxy=settings.warp_proxy_url or settings.proxy_url,
         )
-        download_elapsed = time.perf_counter() - download_started_at
+    except (RuntimeError, OSError):
+        _platform_error(
+            "Could not extract audio from this video.",
+            "audio_extraction_failed",
+        )
+    download_elapsed = time.perf_counter() - download_started_at
+
+    try:
         transcription_result = transcribe_audio_with_metadata(audio_path)
     finally:
         if audio_path:

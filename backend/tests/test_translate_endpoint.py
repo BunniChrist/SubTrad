@@ -336,7 +336,7 @@ def test_translate_runs_whisper_fallback_when_subtitles_are_missing(monkeypatch)
             "platform: tiktok\n"
             "video_id: 1234567890\n"
             "language: en\n"
-            "date: 2026-04-04\n"
+            f"date: {__import__('datetime').date.today().isoformat()}\n"
             "---\n\n"
             "[00:00] Hello world 😀"
         ),
@@ -722,7 +722,7 @@ def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
             "platform: youtube\n"
             "video_id: dQw4w9WgXcQ\n"
             "language: en\n"
-            "date: 2026-04-04\n"
+            f"date: {__import__('datetime').date.today().isoformat()}\n"
             "---\n\n"
             "[00:00] Hello"
         ),
