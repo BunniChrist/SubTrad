@@ -374,8 +374,17 @@ def _handle_youtube(
             )
         except ApiError:
             raise
-        except Exception as exc:
-            _response_error(502, "Transcription pipeline failed", str(exc))
+        except ValueError:
+            _platform_error("Audio transcription failed.", "audio_transcription_failed")
+        except Exception:
+            logger.exception("Unexpected Whisper fallback failure for youtube video_id=%s", video_id)
+            raise ApiError(
+                status_code=500,
+                content={
+                    "detail": "Transcription pipeline failed.",
+                    "error_code": "internal_error",
+                },
+            )
 
     translation_result = translate_subtitles_with_metadata(
         subtitles,
@@ -478,8 +487,21 @@ def _handle_ytdlp(
         )
     except ApiError:
         raise
-    except Exception:
+    except ValueError:
         _platform_error(
-            "Could not extract audio from this video.",
-            "audio_extraction_failed",
+            "Audio transcription failed.",
+            "audio_transcription_failed",
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected Whisper fallback failure for platform=%s video_id=%s",
+            platform,
+            video_id,
+        )
+        raise ApiError(
+            status_code=500,
+            content={
+                "detail": "Transcription pipeline failed.",
+                "error_code": "internal_error",
+            },
         )

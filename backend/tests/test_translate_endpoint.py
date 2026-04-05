@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -346,6 +347,7 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
     """Transcription errors apply to non-YouTube platforms."""
     from backend.routers import translate
 
+    settings = translate.get_settings().model_copy(update={"openai_api_key": "test-openai-key"})
     monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda url, proxy="": 120)
     monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda url, proxy="": None)
     monkeypatch.setattr(
@@ -361,7 +363,7 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
     )
 
     def raise_transcription_error(audio_path: str) -> dict[str, object]:
-        raise RuntimeError("Whisper API unavailable")
+        raise ValueError("Audio preprocessing failed: invalid header")
 
     monkeypatch.setattr(
         translate,
@@ -369,19 +371,23 @@ def test_translate_returns_clear_error_when_transcription_fails(monkeypatch) -> 
         raise_transcription_error,
     )
 
-    response = client.post(
-        "/api/translate",
-        json={
-            "url": "https://www.tiktok.com/@user/video/1234567890",
-            "target_lang": "ja",
-        },
-    )
+    with pytest.raises(translate.ApiError) as exc_info:
+        translate._handle_ytdlp(
+            url="https://www.tiktok.com/@user/video/1234567890",
+            platform="tiktok",
+            video_id="1234567890",
+            target_lang="ja",
+            settings=settings,
+            cache=FakeSubtitleCache("data/test-cache.db"),
+            counter=FakeRequestCounter("data/test-cache.db", threshold=100),
+        )
 
-    assert response.status_code == 422
-    assert response.json() == {
-        "detail": "Could not extract audio from this video.",
-        "error_code": "audio_extraction_failed",
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == {
+        "detail": "Audio transcription failed.",
+        "error_code": "audio_transcription_failed",
     }
+    assert cleanup_calls == ["/tmp/subtrad/1234567890.m4a"]
 
 
 def test_translate_returns_skipped_status_when_source_matches_target(monkeypatch) -> None:

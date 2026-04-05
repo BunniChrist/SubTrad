@@ -152,10 +152,10 @@ def test_youtube_whisper_fallback_raises_http_exception_on_failure(monkeypatch) 
             counter=FakeRequestCounter(),
         )
 
-    assert exc_info.value.status_code == 502
+    assert exc_info.value.status_code == 500
     assert exc_info.value.detail == {
-        "detail": "Transcription pipeline failed",
-        "error": "Whisper API unavailable",
+        "detail": "Transcription pipeline failed.",
+        "error_code": "internal_error",
     }
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 
@@ -197,10 +197,10 @@ def test_youtube_whisper_fallback_cleans_up_audio_when_extraction_fails(monkeypa
             counter=FakeRequestCounter(),
         )
 
-    assert exc_info.value.status_code == 502
+    assert exc_info.value.status_code == 500
     assert exc_info.value.detail == {
-        "detail": "Transcription pipeline failed",
-        "error": "Audio extraction failed",
+        "detail": "Transcription pipeline failed.",
+        "error_code": "internal_error",
     }
     assert cleanup_calls == ["extract:dQw4w9WgXcQ"]
 

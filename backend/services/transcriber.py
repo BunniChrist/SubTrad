@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -9,11 +10,11 @@ except ModuleNotFoundError:  # pragma: no cover - dependency may be absent in te
     WhisperModel = None  # type: ignore[assignment]
 
 try:
-    from backend.audio_preprocess import preprocess_audio
+    from backend.audio_preprocess import cleanup_preprocessed, preprocess_audio
     from backend.config import get_settings
     from backend.transcript_cleanup import cleanup_transcript
 except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn main:app`
-    from audio_preprocess import preprocess_audio
+    from audio_preprocess import cleanup_preprocessed, preprocess_audio
     from config import get_settings
     from transcript_cleanup import cleanup_transcript
 
@@ -32,6 +33,7 @@ WHISPER_SUPPORTED = {
 }
 
 _model = None
+_model_lock = threading.Lock()
 
 
 def _validate_audio_file(path: Path) -> None:
@@ -48,14 +50,15 @@ def _validate_audio_file(path: Path) -> None:
 
 def _get_model():
     global _model
-    if _model is None:
-        if WhisperModel is None:
-            raise RuntimeError("faster-whisper is not installed")
-        _model = WhisperModel(
-            get_settings().whisper_model,
-            device="cpu",
-            compute_type="int8",
-        )
+    with _model_lock:
+        if _model is None:
+            if WhisperModel is None:
+                raise RuntimeError("faster-whisper is not installed")
+            _model = WhisperModel(
+                get_settings().whisper_model,
+                device="cpu",
+                compute_type="int8",
+            )
     return _model
 
 
@@ -70,54 +73,56 @@ def transcribe_audio_with_metadata(
     preprocess_started_at = time.perf_counter()
     prepared_audio_path = preprocess_audio(str(path))
     preprocess_elapsed = time.perf_counter() - preprocess_started_at
-    model = _get_model()
-
     try:
-        transcription_started_at = time.perf_counter()
-        if source_lang:
-            segments, info = model.transcribe(
-                prepared_audio_path,
-                word_timestamps=False,
-                vad_filter=True,
-                language=source_lang,
-            )
-        else:
-            _, detected_info = model.transcribe(
-                prepared_audio_path,
-                word_timestamps=False,
-                vad_filter=True,
-                clip_timestamps="0,30",
-            )
-            detected_language = getattr(detected_info, "language", None)
-            segments, info = model.transcribe(
-                prepared_audio_path,
-                word_timestamps=False,
-                vad_filter=True,
-                language=detected_language,
-            )
-        transcription_elapsed = time.perf_counter() - transcription_started_at
-    except Exception as exc:
-        raise ValueError(f"Invalid audio file: {path.name}") from exc
+        try:
+            model = _get_model()
+            transcription_started_at = time.perf_counter()
+            if source_lang:
+                segments, info = model.transcribe(
+                    prepared_audio_path,
+                    word_timestamps=False,
+                    vad_filter=True,
+                    language=source_lang,
+                )
+            else:
+                _, detected_info = model.transcribe(
+                    prepared_audio_path,
+                    word_timestamps=False,
+                    vad_filter=True,
+                    clip_timestamps="0,30",
+                )
+                detected_language = getattr(detected_info, "language", None)
+                segments, info = model.transcribe(
+                    prepared_audio_path,
+                    word_timestamps=False,
+                    vad_filter=True,
+                    language=detected_language,
+                )
+            transcription_elapsed = time.perf_counter() - transcription_started_at
+        except Exception as exc:
+            raise ValueError(f"Invalid audio file: {path.name}") from exc
 
-    cleaned_segments = cleanup_transcript(
-        [
-            {
-                "start": float(segment.start),
-                "end": float(segment.end),
-                "text": str(segment.text),
-            }
-            for segment in segments
-        ]
-    )
+        cleaned_segments = cleanup_transcript(
+            [
+                {
+                    "start": float(segment.start),
+                    "end": float(segment.end),
+                    "text": str(segment.text),
+                }
+                for segment in segments
+            ]
+        )
 
-    return {
-        "segments": cleaned_segments,
-        "language": getattr(info, "language", None),
-        "timings": {
-            "preprocess_seconds": round(preprocess_elapsed, 3),
-            "transcription_seconds": round(transcription_elapsed, 3),
-        },
-    }
+        return {
+            "segments": cleaned_segments,
+            "language": getattr(info, "language", None),
+            "timings": {
+                "preprocess_seconds": round(preprocess_elapsed, 3),
+                "transcription_seconds": round(transcription_elapsed, 3),
+            },
+        }
+    finally:
+        cleanup_preprocessed(prepared_audio_path)
 
 
 def transcribe_audio(audio_path: str) -> list[dict[str, float | str]]:

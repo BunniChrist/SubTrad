@@ -147,6 +147,58 @@ def test_ytdlp_returns_422_when_audio_extraction_fails(monkeypatch, platform: st
 
 
 @pytest.mark.parametrize(("platform", "url"), PLATFORM_CASES)
+def test_ytdlp_returns_422_when_transcription_fails(monkeypatch, platform: str, url: str) -> None:
+    from backend.routers import translate
+
+    settings = translate.get_settings().model_copy(update={"openai_api_key": "test-openai-key"})
+
+    class FakeSubtitleCache:
+        def retrieve(self, video_id: str, target_lang: str):
+            return None
+
+        def store(self, video_id: str, target_lang: str, response_data: dict[str, object]) -> None:
+            return None
+
+    class FakeRequestCounter:
+        def increment(self, video_id: str, target_lang: str) -> int:
+            return 1
+
+        def should_cache(self, video_id: str, target_lang: str) -> bool:
+            return False
+
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda candidate_url, proxy="": 120)
+    monkeypatch.setattr(translate, "fetch_existing_subtitles", lambda candidate_url, proxy="": None)
+    monkeypatch.setattr(
+        translate,
+        "extract_audio",
+        lambda candidate_url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path: (_ for _ in ()).throw(ValueError("Audio preprocessing failed: invalid header")),
+    )
+    monkeypatch.setattr(translate, "cleanup_audio", lambda audio_path: None)
+
+    with pytest.raises(translate.ApiError) as exc_info:
+        translate._handle_ytdlp(
+            url=url,
+            platform=platform,
+            video_id="test-video-id",
+            target_lang="fr",
+            settings=settings,
+            cache=FakeSubtitleCache(),
+            counter=FakeRequestCounter(),
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == {
+        "detail": "Audio transcription failed.",
+        "error_code": "audio_transcription_failed",
+    }
+
+
+@pytest.mark.parametrize(("platform", "url"), PLATFORM_CASES)
 def test_ytdlp_handles_missing_segments_payload_without_crashing(monkeypatch, platform: str, url: str) -> None:
     from backend.routers import translate
 

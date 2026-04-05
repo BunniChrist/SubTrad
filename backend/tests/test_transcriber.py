@@ -1,4 +1,6 @@
+import time
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -55,6 +57,31 @@ def test_get_model_returns_singleton_instance(monkeypatch) -> None:
 
     assert first is second
     assert FakeWhisperModel.init_calls == [("distil-test-model", "cpu", "int8")]
+
+
+def test_get_model_initializes_once_under_concurrency(monkeypatch) -> None:
+    from backend.services import transcriber
+
+    init_calls: list[tuple[str, str, str]] = []
+
+    class SlowWhisperModel:
+        def __init__(self, model_name: str, device: str, compute_type: str) -> None:
+            init_calls.append((model_name, device, compute_type))
+            time.sleep(0.05)
+
+    monkeypatch.setattr(
+        transcriber,
+        "get_settings",
+        lambda: SimpleNamespace(whisper_model="distil-test-model"),
+    )
+    monkeypatch.setattr(transcriber, "WhisperModel", SlowWhisperModel)
+    monkeypatch.setattr(transcriber, "_model", None)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first, second = executor.map(lambda _: transcriber._get_model(), range(2))
+
+    assert first is second
+    assert init_calls == [("distil-test-model", "cpu", "int8")]
 
 
 def test_transcribe_audio_parses_distil_whisper_segments(monkeypatch, tmp_path) -> None:
@@ -126,6 +153,51 @@ def test_transcribe_audio_raises_value_error_for_invalid_audio(
 
     with pytest.raises(ValueError, match="Invalid audio file"):
         transcribe_audio(str(audio_file))
+
+
+def test_transcribe_audio_cleans_preprocessed_file_after_success(monkeypatch, tmp_path) -> None:
+    from backend.services import transcriber
+
+    audio_file = tmp_path / "audio.mp3"
+    audio_file.write_bytes(b"fake-audio" * 256)
+    preprocessed_file = tmp_path / "audio.preprocessed.wav"
+
+    def fake_preprocess(audio_path: str) -> str:
+        preprocessed_file.write_bytes(b"processed-audio" * 256)
+        return str(preprocessed_file)
+
+    class CleaningModel:
+        def transcribe(self, audio_path: str, **kwargs):
+            return iter([FakeSegment(0.0, 1.0, "Hello")]), FakeInfo("en")
+
+    monkeypatch.setattr(transcriber, "_get_model", lambda: CleaningModel())
+    monkeypatch.setattr(transcriber, "preprocess_audio", fake_preprocess)
+    monkeypatch.setattr(transcriber, "cleanup_transcript", lambda segments: segments)
+
+    payload = transcribe_audio_with_metadata(str(audio_file), source_lang="en")
+
+    assert payload["segments"] == [{"start": 0.0, "end": 1.0, "text": "Hello"}]
+    assert not preprocessed_file.exists()
+
+
+def test_transcribe_audio_cleans_preprocessed_file_after_failure(monkeypatch, tmp_path) -> None:
+    from backend.services import transcriber
+
+    audio_file = tmp_path / "audio.mp3"
+    audio_file.write_bytes(b"fake-audio" * 256)
+    preprocessed_file = tmp_path / "audio.preprocessed.wav"
+
+    def fake_preprocess(audio_path: str) -> str:
+        preprocessed_file.write_bytes(b"processed-audio" * 256)
+        return str(preprocessed_file)
+
+    monkeypatch.setattr(transcriber, "_get_model", lambda: ErroringWhisperModel())
+    monkeypatch.setattr(transcriber, "preprocess_audio", fake_preprocess)
+
+    with pytest.raises(ValueError, match="Invalid audio file"):
+        transcribe_audio(str(audio_file))
+
+    assert not preprocessed_file.exists()
 
 
 def test_transcribe_audio_returns_float_timestamps(monkeypatch, tmp_path) -> None:
