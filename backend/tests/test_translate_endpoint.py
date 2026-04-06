@@ -160,6 +160,12 @@ def test_translate_returns_clear_error_when_metadata_lookup_fails(monkeypatch) -
 def test_translate_returns_existing_subtitles(monkeypatch) -> None:
     from backend.routers import translate
 
+    settings = translate.get_settings().model_copy(
+        update={
+            "youtube_api_key": "test-youtube-api-key",
+            "openai_api_key": "test-openai-key",
+        }
+    )
     monkeypatch.setattr(
         translate,
         "get_video_info",
@@ -176,32 +182,43 @@ def test_translate_returns_existing_subtitles(monkeypatch) -> None:
         translate,
         "translate_subtitles_with_metadata",
         lambda subtitles, target_lang, api_key, source_lang=None: {
-            "segments": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Bonjour"}],
+            "segments": [{"start": "1.0", "end": "2.0", "text": "Bonjour"}],
             "detected_language": "en",
             "translation_status": "translated",
         },
     )
-
-    response = client.post(
-        "/api/translate",
-        json={
-            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            "target_lang": "fr",
-        },
+    response = translate._handle_youtube(
+        video_id="dQw4w9WgXcQ",
+        target_lang="fr",
+        settings=settings,
+        cache=FakeSubtitleCache("data/test-cache.db"),
+        counter=FakeRequestCounter("data/test-cache.db", threshold=100),
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
+    assert response.model_dump() == {
         "platform": "youtube",
         "video_id": "dQw4w9WgXcQ",
-        "subtitles": [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Bonjour"}],
+        "subtitles": [{"start": "1.0", "end": "2.0", "text": "Bonjour"}],
         "duration_seconds": 120,
         "needs_transcription": False,
         "source": "existing_captions",
         "target_lang": "fr",
         "detected_language": "en",
         "translation_status": "translated",
-        "exports": None,
+        "exports": {
+            "vtt": "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nBonjour\n",
+            "txt": "Bonjour",
+            "md": (
+                "---\n"
+                "title: youtube-dQw4w9WgXcQ\n"
+                "platform: youtube\n"
+                "video_id: dQw4w9WgXcQ\n"
+                "language: en\n"
+                f"date: {__import__('datetime').date.today().isoformat()}\n"
+                "---\n\n"
+                "[00:00] Bonjour"
+            ),
+        },
     }
 
 

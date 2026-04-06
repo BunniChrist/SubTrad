@@ -243,6 +243,8 @@ def test_ytdlp_existing_captions_still_translate_when_target_language_matches(
     from backend.routers import translate
 
     translate_calls: list[dict[str, object]] = []
+    settings = translate.get_settings().model_copy(update={"openai_api_key": "test-openai-key"})
+    video_id = "C7Dxyz12345" if platform == "instagram" else "1234567890"
 
     monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda candidate_url, proxy="": 55)
     monkeypatch.setattr(
@@ -267,10 +269,35 @@ def test_ytdlp_existing_captions_still_translate_when_target_language_matches(
 
     monkeypatch.setattr(translate, "translate_subtitles_with_metadata", fake_translate)
 
-    response = client.post("/api/translate", json={"url": url, "target_lang": "fr"})
+    response = translate._handle_ytdlp(
+        url=url,
+        platform=platform,
+        video_id=video_id,
+        target_lang="fr",
+        settings=settings,
+        cache=SimpleNamespace(store=lambda *args, **kwargs: None),
+        counter=SimpleNamespace(
+            increment=lambda *args, **kwargs: 1,
+            should_cache=lambda *args, **kwargs: False,
+        ),
+    )
 
-    assert response.status_code == 200
-    assert response.json()["translation_status"] == "translated"
+    payload = response.model_dump()
+    assert payload["translation_status"] == "translated"
+    assert payload["exports"] == {
+        "vtt": "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nBonjour traduit\n",
+        "txt": "Bonjour traduit",
+        "md": (
+            "---\n"
+            f"title: {platform}-{video_id}\n"
+            f"platform: {platform}\n"
+            f"video_id: {video_id}\n"
+            "language: fr\n"
+            f"date: {__import__('datetime').date.today().isoformat()}\n"
+            "---\n\n"
+            "[00:00] Bonjour traduit"
+        ),
+    }
     assert translate_calls == [
         {
             "subtitles": [{"start": "0.0", "end": "1.0", "text": "Bonjour"}],

@@ -413,6 +413,12 @@ def _handle_youtube(
         target_lang=target_lang,
         detected_language=_translation_detected_language(translation_result),
         translation_status=_translation_status(translation_result),
+        exports=_build_transcript_exports(
+            segments=_translation_segments(translation_result),
+            platform="youtube",
+            video_id=video_id,
+            language=_translation_detected_language(translation_result),
+        ),
     )
     counter.increment(video_id, target_lang)
     if counter.should_cache(video_id, target_lang):
@@ -479,6 +485,12 @@ def _handle_ytdlp(
             target_lang=target_lang,
             detected_language=_translation_detected_language(translation_result),
             translation_status=_translation_status(translation_result),
+            exports=_build_transcript_exports(
+                segments=_translation_segments(translation_result),
+                platform=platform,
+                video_id=video_id,
+                language=_translation_detected_language(translation_result),
+            ),
         )
         counter.increment(video_id, target_lang)
         if counter.should_cache(video_id, target_lang):

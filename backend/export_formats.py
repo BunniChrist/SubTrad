@@ -4,7 +4,18 @@ from __future__ import annotations
 def _as_seconds(value: object) -> float:
     if isinstance(value, (int, float)):
         return float(value)
-    return float(str(value))
+    text = str(value)
+    # Handle SRT/SubRip timestamp format: HH:MM:SS,mmm
+    if ":" in text:
+        text = text.replace(",", ".")
+        parts = text.split(":")
+        if len(parts) == 3:
+            h, m, s = parts
+            return int(h) * 3600 + int(m) * 60 + float(s)
+        if len(parts) == 2:
+            m, s = parts
+            return int(m) * 60 + float(s)
+    return float(text)
 
 
 def _format_vtt_timestamp(seconds: float) -> str:
