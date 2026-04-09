@@ -7,13 +7,14 @@ DEFAULT_CACHE_DB_PATH = str(Path(__file__).resolve().parent.parent / "data" / "c
 
 
 class Settings(BaseSettings):
-    max_duration_seconds: int = 720
+    max_duration_seconds: int = 18_000
     cache_threshold: int = 100
     cache_db_path: str = DEFAULT_CACHE_DB_PATH
     supported_languages: list[str] = ["fr", "es", "en", "ja"]
     whisper_model: str = "distil-large-v3"
     translation_backend: str = "openai"
     codex_model: str = "gpt-4o-mini"
+    codex_timeout_seconds: int = 900
     openai_api_key: str = ""
     youtube_api_key: str = ""
     proxy_url: str = ""

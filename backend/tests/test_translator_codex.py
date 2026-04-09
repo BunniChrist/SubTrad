@@ -49,7 +49,7 @@ def test_translate_subtitles_with_metadata_codex_replaces_text_and_preserves_tim
     calls: list[dict] = []
 
     def fake_run(args, capture_output, text, timeout, input=None):
-        calls.append({"args": args, "input": input})
+        calls.append({"args": args, "input": input, "timeout": timeout})
         if len(calls) == 1:
             return SimpleNamespace(returncode=0, stdout=_codex_stdout("en"), stderr="")
         return SimpleNamespace(returncode=0, stdout=_codex_stdout("1|Bonjour\n2|Salut"), stderr="")
@@ -71,6 +71,7 @@ def test_translate_subtitles_with_metadata_codex_replaces_text_and_preserves_tim
         {"start": 1.0, "end": 2.0, "text": "Salut"},
     ]
     assert calls[1]["args"][:4] == ["codex", "exec", "--skip-git-repo-check", "-m"]
+    assert calls[1]["timeout"] == 900
 
 
 def test_translate_subtitles_with_metadata_codex_falls_back_on_timeout(monkeypatch) -> None:

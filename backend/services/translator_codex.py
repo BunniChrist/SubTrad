@@ -117,7 +117,8 @@ def translate_subtitles_with_metadata_codex(
 
 
 def _run_codex(prompt: str) -> str | None:
-    model = get_settings().codex_model
+    settings = get_settings()
+    model = settings.codex_model
 
     try:
         completed = subprocess.run(
@@ -125,7 +126,7 @@ def _run_codex(prompt: str) -> str | None:
             capture_output=True,
             text=True,
             input=prompt,
-            timeout=120,
+            timeout=settings.codex_timeout_seconds,
         )
     except (OSError, subprocess.SubprocessError):
         return None

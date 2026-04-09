@@ -222,7 +222,7 @@ def test_ytdlp_handles_missing_segments_payload_without_crashing(monkeypatch, pl
 def test_ytdlp_returns_403_for_videos_exceeding_duration_limit(monkeypatch, platform: str, url: str) -> None:
     from backend.routers import translate
 
-    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda candidate_url, proxy="": 721)
+    monkeypatch.setattr(translate, "fetch_video_duration_seconds", lambda candidate_url, proxy="": 18_001)
 
     response = client.post("/api/translate", json={"url": url, "target_lang": "fr"})
 
@@ -230,7 +230,7 @@ def test_ytdlp_returns_403_for_videos_exceeding_duration_limit(monkeypatch, plat
     assert response.json() == {
         "detail": "Video exceeds maximum duration",
         "redirect": "premium",
-        "duration_seconds": 721,
+        "duration_seconds": 18_001,
     }
 
 

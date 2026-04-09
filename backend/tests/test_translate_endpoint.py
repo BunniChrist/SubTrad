@@ -109,19 +109,64 @@ def test_translate_rejects_unsupported_languages() -> None:
     assert response.json()["detail"] == "Unsupported target language"
 
 
-def test_translate_returns_premium_redirect_for_long_videos(monkeypatch) -> None:
+def test_translate_allows_videos_up_to_five_hours(monkeypatch) -> None:
     from backend.routers import translate
 
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
     monkeypatch.setattr(
         translate,
         "get_video_info",
-        lambda video_id, api_key: {"duration_seconds": 721, "title": "Long Video"},
+        lambda video_id, api_key: {"duration_seconds": 18_000, "title": "Long Video"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "fetch_captions_via_api",
+        lambda video_id, target_lang, api_key, **kwargs: [
+            {"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}
+        ],
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": "1.0", "end": "2.0", "text": "Bonjour"}],
+            "detected_language": "en",
+            "translation_status": "translated",
+        },
     )
 
     response = client.post(
         "/api/translate",
         json={
-            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "url": "https://www.youtube.com/watch?v=abc123xyz89",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["duration_seconds"] == 18_000
+
+
+def test_translate_returns_premium_redirect_for_videos_over_five_hours(monkeypatch) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 18_001, "title": "Long Video"},
+    )
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.youtube.com/watch?v=abc123xyz90",
             "target_lang": "fr",
         },
     )
@@ -130,7 +175,7 @@ def test_translate_returns_premium_redirect_for_long_videos(monkeypatch) -> None
     assert response.json() == {
         "detail": "Video exceeds maximum duration",
         "redirect": "premium",
-        "duration_seconds": 721,
+        "duration_seconds": 18_001,
     }
 
 
@@ -459,6 +504,10 @@ def test_translate_returns_original_subtitles_with_warning_when_translation_fail
 ) -> None:
     from backend.routers import translate
 
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
     original_subtitles = [{"start": "00:00:01,000", "end": "00:00:02,000", "text": "Hello"}]
     monkeypatch.setattr(
         translate,
@@ -686,6 +735,10 @@ def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
     """YouTube videos with no captions should use Whisper transcription."""
     from backend.routers import translate
 
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
     cleanup_calls: list[str] = []
 
     monkeypatch.setattr(
