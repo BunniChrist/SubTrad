@@ -7,8 +7,10 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 try:
+    from backend.services.rapidapi_downloader import extract_audio_via_rapidapi
     from backend.services.warp_rotator import is_youtube_block, rotate_warp_ip
 except ModuleNotFoundError:  # pragma: no cover
+    from services.rapidapi_downloader import extract_audio_via_rapidapi
     from services.warp_rotator import is_youtube_block, rotate_warp_ip
 
 
@@ -30,6 +32,8 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
     options = {
         "format": "bestaudio/best",
         "outtmpl": output_template,
+        "username": "oauth2",
+        "password": "",
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -58,9 +62,14 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
         if not is_youtube_block(exc):
             raise
         rotation_url = get_settings().warp_rotation_url
-        if not rotation_url or not rotate_warp_ip(rotation_url):
-            raise
-        _extract()
+        if rotation_url:
+            rotate_warp_ip(rotation_url)
+        try:
+            _extract()
+        except DownloadError as retry_exc:
+            if not is_youtube_block(retry_exc):
+                raise
+            return extract_audio_via_rapidapi(url)
 
     candidates = sorted(TEMP_AUDIO_DIR.glob(f"{video_id}.*"))
     if not candidates:
