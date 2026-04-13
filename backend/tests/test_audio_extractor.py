@@ -120,6 +120,28 @@ def test_extract_audio_skips_stale_cookie_file(monkeypatch, tmp_path) -> None:
         cleanup_audio(audio_path)
 
 
+def test_extract_audio_ignores_cookie_permission_error(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    class CookiePermissionDenied:
+        def exists(self) -> bool:
+            raise PermissionError("permission denied")
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YOUTUBE_COOKIE_FILE", CookiePermissionDenied())
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", FakeYoutubeDL)
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+    )
+
+    try:
+        assert Path(audio_path).exists()
+    finally:
+        cleanup_audio(audio_path)
+
+
 def test_cleanup_audio_removes_existing_file(tmp_path) -> None:
     audio_file = tmp_path / "sample.m4a"
     audio_file.write_bytes(b"fake-audio")

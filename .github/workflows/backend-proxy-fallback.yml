@@ -31,4 +31,5 @@ jobs:
             backend/tests/test_audio_extractor.py \
             backend/tests/test_rapidapi_downloader.py \
             backend/tests/test_warp_rotator.py \
+            -m "not integration" \
             -q

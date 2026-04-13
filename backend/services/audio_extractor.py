@@ -45,10 +45,14 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
         "no_warnings": True,
         "extractor_args": {"youtube": {"player_client": ["web", "default"]}},
     }
-    if YOUTUBE_COOKIE_FILE.exists():
-        age_days = (time.time() - YOUTUBE_COOKIE_FILE.stat().st_mtime) / 86400
-        if age_days < 30:
-            options["cookiefile"] = str(YOUTUBE_COOKIE_FILE)
+    try:
+        if YOUTUBE_COOKIE_FILE.exists():
+            age_days = (time.time() - YOUTUBE_COOKIE_FILE.stat().st_mtime) / 86400
+            if age_days < 30:
+                options["cookiefile"] = str(YOUTUBE_COOKIE_FILE)
+    except OSError:
+        # Ignore cookie path permission issues (e.g. CI runners) and continue without cookies.
+        pass
     if proxy:
         options["proxy"] = proxy
 
