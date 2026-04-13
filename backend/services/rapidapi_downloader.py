@@ -32,12 +32,11 @@ def extract_audio_via_rapidapi(url: str, timeout: float = 25.0) -> str:
     hosts = [
         (settings.rapidapi_host_1 or "").strip(),
         (settings.rapidapi_host_2 or "").strip(),
-        (settings.rapidapi_host_3 or "").strip(),
     ]
     hosts = [host for host in hosts if host]
 
     if not rapidapi_key or not hosts:
-        raise RuntimeError("RapidAPI fallback is not configured")
+        raise RuntimeError("RapidAPI audio extraction is not configured")
 
     video_id = extract_video_id(url, "youtube")
     failures: list[str] = []
@@ -122,30 +121,10 @@ def _request_candidates(host: str, *, source_url: str, video_id: str) -> list[tu
             ("/video", {"id": video_id}),
         ]
 
-    if host == "cloud-api-hub-youtube-downloader.p.rapidapi.com":
-        return [
-            ("/download", {"id": video_id}),
-        ]
-
-    if host == "youtube-mp3-audio-video-downloader.p.rapidapi.com":
-        # Provider endpoint appears unstable; keep a small probe set.
-        return [
-            ("/v1/video/details", {"videoId": video_id}),
-            ("/v2/video/details", {"videoId": video_id}),
-            ("/details", {"videoId": video_id}),
-        ]
-
-    if host == "youtube-video-fast-downloader-24-7.p.rapidapi.com":
-        return [
-            (f"/get_available_quality/{video_id}", None),
-        ]
-
-    # Generic fallback for future host substitutions.
+    # Generic fallback for future host substitutions within the two-provider setup.
     return [
         ("/v2/video/details", {"videoId": video_id}),
         ("/video/download", {"id": video_id}),
-        ("/download", {"id": video_id}),
-        ("/v2/video/details", {"url": source_url}),
     ]
 
 

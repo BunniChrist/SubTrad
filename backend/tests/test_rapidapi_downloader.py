@@ -53,7 +53,6 @@ def test_extract_audio_via_rapidapi_uses_first_host_when_success(monkeypatch, tm
             rapidapi_key="rapidapi-key",
             rapidapi_host_1="host-1",
             rapidapi_host_2="host-2",
-            rapidapi_host_3="host-3",
         ),
     )
     monkeypatch.setattr(rapidapi_downloader, "TEMP_AUDIO_DIR", tmp_path)
@@ -88,7 +87,6 @@ def test_extract_audio_via_rapidapi_falls_back_to_host_2(monkeypatch, tmp_path) 
             rapidapi_key="rapidapi-key",
             rapidapi_host_1="host-1",
             rapidapi_host_2="host-2",
-            rapidapi_host_3="host-3",
         ),
     )
     monkeypatch.setattr(rapidapi_downloader, "TEMP_AUDIO_DIR", tmp_path)
@@ -119,7 +117,6 @@ def test_extract_audio_via_rapidapi_raises_when_all_hosts_fail(monkeypatch, tmp_
             rapidapi_key="rapidapi-key",
             rapidapi_host_1="host-1",
             rapidapi_host_2="host-2",
-            rapidapi_host_3="host-3",
         ),
     )
     monkeypatch.setattr(rapidapi_downloader, "TEMP_AUDIO_DIR", tmp_path)
@@ -128,7 +125,7 @@ def test_extract_audio_via_rapidapi_raises_when_all_hosts_fail(monkeypatch, tmp_
     with pytest.raises(RuntimeError, match="All RapidAPI download hosts failed"):
         extract_audio_via_rapidapi("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 
-    assert metadata_hosts == ["host-1", "host-2", "host-3"]
+    assert metadata_hosts == ["host-1", "host-2"]
 
 
 @pytest.mark.parametrize(
@@ -136,7 +133,6 @@ def test_extract_audio_via_rapidapi_raises_when_all_hosts_fail(monkeypatch, tmp_
     [
         ("youtube-media-downloader.p.rapidapi.com", "/v2/video/details"),
         ("youtube-search-and-download.p.rapidapi.com", "/video/download"),
-        ("cloud-api-hub-youtube-downloader.p.rapidapi.com", "/download"),
     ],
 )
 def test_extract_audio_via_rapidapi_uses_host_specific_endpoint(
@@ -164,7 +160,6 @@ def test_extract_audio_via_rapidapi_uses_host_specific_endpoint(
             rapidapi_key="rapidapi-key",
             rapidapi_host_1=host,
             rapidapi_host_2="",
-            rapidapi_host_3="",
         ),
     )
     monkeypatch.setattr(rapidapi_downloader, "TEMP_AUDIO_DIR", tmp_path)
@@ -199,7 +194,6 @@ def test_extract_audio_via_rapidapi_ignores_thumbnail_urls(monkeypatch, tmp_path
             rapidapi_key="rapidapi-key",
             rapidapi_host_1="youtube-search-and-download.p.rapidapi.com",
             rapidapi_host_2="",
-            rapidapi_host_3="",
         ),
     )
     monkeypatch.setattr(rapidapi_downloader, "TEMP_AUDIO_DIR", tmp_path)

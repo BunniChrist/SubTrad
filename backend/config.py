@@ -23,7 +23,6 @@ class Settings(BaseSettings):
     rapidapi_key: str = ""
     rapidapi_host_1: str = ""
     rapidapi_host_2: str = ""
-    rapidapi_host_3: str = ""
 
     model_config = SettingsConfigDict(env_prefix="subtrad_", extra="ignore")
 
