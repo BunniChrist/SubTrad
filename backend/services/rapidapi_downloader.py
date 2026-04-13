@@ -110,27 +110,23 @@ def _rapidapi_get(
 
 
 def _request_candidates(host: str, *, source_url: str, video_id: str) -> list[tuple[str, dict[str, str] | None]]:
-    # Endpoint structures derived from RapidAPI listing examples and provider docs snippets.
+    # Endpoint structures validated against live host responses.
     if host == "youtube-media-downloader.p.rapidapi.com":
         return [
             ("/v2/video/details", {"videoId": video_id}),
-            ("/v2/video/details", {"url": source_url}),
+        ]
+
+    if host == "youtube-mp3-audio-video-downloader.p.rapidapi.com":
+        # Provider endpoint appears unstable; keep a small probe set.
+        return [
+            ("/v1/video/details", {"videoId": video_id}),
+            ("/v2/video/details", {"videoId": video_id}),
+            ("/details", {"videoId": video_id}),
         ]
 
     if host == "youtube-video-fast-downloader-24-7.p.rapidapi.com":
         return [
             (f"/get_available_quality/{video_id}", None),
-            ("/get_available_quality", {"video_id": video_id}),
-            ("/get_available_quality", {"url": source_url}),
-        ]
-
-    if host == "youtube-mp3-audio-video-downloader.p.rapidapi.com":
-        return [
-            ("/dl", {"id": video_id}),
-            ("/dl", {"url": source_url}),
-            ("/download", {"id": video_id}),
-            ("/download", {"url": source_url}),
-            ("/v2/video/details", {"videoId": video_id}),
         ]
 
     # Generic fallback for future host substitutions.
@@ -194,7 +190,16 @@ def _looks_like_media_url(value: str) -> bool:
 
 
 def _download_media_file(download_url: str, timeout: float) -> str:
-    response = requests.get(download_url, timeout=timeout, stream=True)
+    response = requests.get(
+        download_url,
+        timeout=timeout,
+        stream=True,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "*/*",
+            "Referer": "https://www.youtube.com/",
+        },
+    )
     response.raise_for_status()
 
     content_type = ""

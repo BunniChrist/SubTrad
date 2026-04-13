@@ -40,7 +40,7 @@ def test_extract_audio_via_rapidapi_uses_first_host_when_success(monkeypatch, tm
     calls: list[tuple[str, str]] = []
 
     def fake_get(url, *, headers=None, params=None, timeout=None, stream=False):
-        host = headers["X-RapidAPI-Host"] if headers else ""
+        host = headers.get("X-RapidAPI-Host", "") if headers else ""
         calls.append((host, url))
         if not stream:
             return FakeResponse(payload={"downloadUrl": "https://cdn.example/audio1.m4a"})
@@ -72,7 +72,7 @@ def test_extract_audio_via_rapidapi_falls_back_to_host_2(monkeypatch, tmp_path) 
     metadata_hosts: list[str] = []
 
     def fake_get(url, *, headers=None, params=None, timeout=None, stream=False):
-        host = headers["X-RapidAPI-Host"] if headers else ""
+        host = headers.get("X-RapidAPI-Host", "") if headers else ""
         if stream:
             return FakeResponse(chunks=[b"host2-audio"])
 
@@ -108,7 +108,7 @@ def test_extract_audio_via_rapidapi_raises_when_all_hosts_fail(monkeypatch, tmp_
     def fake_get(url, *, headers=None, params=None, timeout=None, stream=False):
         if stream:
             return FakeResponse(chunks=[])
-        host = headers["X-RapidAPI-Host"] if headers else ""
+        host = headers.get("X-RapidAPI-Host", "") if headers else ""
         metadata_hosts.append(host)
         return FakeResponse(status_code=500, payload={"error": "failed"})
 

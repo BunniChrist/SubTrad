@@ -16,6 +16,10 @@ except ModuleNotFoundError:  # pragma: no cover
 
 TEMP_AUDIO_DIR = Path("/tmp/subtrad")
 YOUTUBE_COOKIE_FILE = Path("/root/yt_cookies.txt")
+_OAUTH_UNSUPPORTED_PATTERNS = (
+    "oauth is no longer supported",
+    "login with oauth is no longer supported",
+)
 
 
 def get_settings():
@@ -60,20 +64,44 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
         with YoutubeDL(options) as ydl:
             ydl.extract_info(url, download=True)
 
+    def _extract_with_oauth_fallback() -> None:
+        try:
+            _extract()
+        except DownloadError as exc:
+            message = str(exc).lower()
+            oauth_enabled = options.get("username") == "oauth2"
+            if oauth_enabled and any(pattern in message for pattern in _OAUTH_UNSUPPORTED_PATTERNS):
+                options.pop("username", None)
+                options.pop("password", None)
+                _extract()
+                return
+            raise
+
+    def _is_fallback_trigger(exc: DownloadError) -> bool:
+        if is_youtube_block(exc):
+            return True
+        message = str(exc).lower()
+        return any(pattern in message for pattern in _OAUTH_UNSUPPORTED_PATTERNS)
+
     try:
-        _extract()
+        _extract_with_oauth_fallback()
     except DownloadError as exc:
-        if not is_youtube_block(exc):
+        if not _is_fallback_trigger(exc):
             raise
         rotation_url = get_settings().warp_rotation_url
         if rotation_url:
             rotate_warp_ip(rotation_url)
         try:
-            _extract()
+            _extract_with_oauth_fallback()
         except DownloadError as retry_exc:
-            if not is_youtube_block(retry_exc):
+            if not _is_fallback_trigger(retry_exc):
                 raise
-            return extract_audio_via_rapidapi(url)
+            try:
+                return extract_audio_via_rapidapi(url)
+            except Exception:
+                # Last-resort fallback: bypass proxy for low-volume resilience.
+                options.pop("proxy", None)
+                _extract_with_oauth_fallback()
 
     candidates = sorted(TEMP_AUDIO_DIR.glob(f"{video_id}.*"))
     if not candidates:

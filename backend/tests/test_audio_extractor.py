@@ -295,11 +295,98 @@ def test_extract_audio_raises_when_ytdlp_and_rapidapi_fail(monkeypatch, tmp_path
         lambda url: (_ for _ in ()).throw(RuntimeError("rapidapi exhausted")),
     )
 
-    with pytest.raises(RuntimeError, match="rapidapi exhausted"):
+    with pytest.raises(DownloadError, match="HTTP Error 429"):
         extract_audio(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "dQw4w9WgXcQ",
         )
+
+
+def test_extract_audio_retries_without_oauth_when_unsupported(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    attempts: list[dict[str, object]] = []
+
+    class OAuthRetryYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "OAuthRetryYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool) -> dict[str, str]:
+            attempts.append(dict(self.options))
+            if self.options.get("username") == "oauth2":
+                raise DownloadError("Login with OAuth is no longer supported")
+            target_path = tmp_path / "dQw4w9WgXcQ.m4a"
+            target_path.write_bytes(b"fake-audio")
+            return {"id": "dQw4w9WgXcQ", "ext": "m4a"}
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", OAuthRetryYoutubeDL)
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+    )
+
+    assert audio_path == str(tmp_path / "dQw4w9WgXcQ.m4a")
+    assert attempts[0].get("username") == "oauth2"
+    assert "username" not in attempts[1]
+
+
+def test_extract_audio_uses_direct_retry_when_rapidapi_fails(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    attempts: list[dict[str, object]] = []
+
+    class ProxyThenDirectYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "ProxyThenDirectYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool) -> dict[str, str]:
+            attempts.append(dict(self.options))
+            if self.options.get("proxy"):
+                raise DownloadError("HTTP Error 429: Too Many Requests")
+            target_path = tmp_path / "dQw4w9WgXcQ.m4a"
+            target_path.write_bytes(b"fake-audio")
+            return {"id": "dQw4w9WgXcQ", "ext": "m4a"}
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", ProxyThenDirectYoutubeDL)
+    monkeypatch.setattr(audio_extractor, "get_settings", lambda: SimpleNamespace(
+        warp_rotation_url="http://10.0.1.1:40002/rotate",
+        rapidapi_key="rapidapi-key",
+        rapidapi_host_1="host-1",
+        rapidapi_host_2="host-2",
+        rapidapi_host_3="host-3",
+    ))
+    monkeypatch.setattr(audio_extractor, "rotate_warp_ip", lambda url: True)
+    monkeypatch.setattr(
+        audio_extractor,
+        "extract_audio_via_rapidapi",
+        lambda url: (_ for _ in ()).throw(RuntimeError("rapidapi exhausted")),
+    )
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+        proxy="socks5h://127.0.0.1:1",
+    )
+
+    assert audio_path == str(tmp_path / "dQw4w9WgXcQ.m4a")
+    assert attempts[0].get("proxy") == "socks5h://127.0.0.1:1"
+    assert attempts[1].get("proxy") == "socks5h://127.0.0.1:1"
+    assert "proxy" not in attempts[2]
 
 
 @pytest.mark.integration
