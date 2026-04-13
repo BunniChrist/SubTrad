@@ -129,3 +129,82 @@ def test_extract_audio_via_rapidapi_raises_when_all_hosts_fail(monkeypatch, tmp_
         extract_audio_via_rapidapi("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 
     assert metadata_hosts == ["host-1", "host-2", "host-3"]
+
+
+@pytest.mark.parametrize(
+    ("host", "expected_path"),
+    [
+        ("youtube-media-downloader.p.rapidapi.com", "/v2/video/details"),
+        ("youtube-search-and-download.p.rapidapi.com", "/video/download"),
+        ("cloud-api-hub-youtube-downloader.p.rapidapi.com", "/download"),
+    ],
+)
+def test_extract_audio_via_rapidapi_uses_host_specific_endpoint(
+    monkeypatch, tmp_path, host: str, expected_path: str
+) -> None:
+    from backend.services import rapidapi_downloader
+
+    called_urls: list[str] = []
+
+    def fake_get(url, *, headers=None, params=None, timeout=None, stream=False):
+        called_urls.append(url)
+        if not stream:
+            return FakeResponse(
+                payload={
+                    "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                    "url": "https://redirector.googlevideo.com/videoplayback?mime=audio/mp4",
+                }
+            )
+        return FakeResponse(chunks=[b"audio-bytes"])
+
+    monkeypatch.setattr(
+        rapidapi_downloader,
+        "get_settings",
+        lambda: SimpleNamespace(
+            rapidapi_key="rapidapi-key",
+            rapidapi_host_1=host,
+            rapidapi_host_2="",
+            rapidapi_host_3="",
+        ),
+    )
+    monkeypatch.setattr(rapidapi_downloader, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(rapidapi_downloader.requests, "get", fake_get)
+
+    audio_path = extract_audio_via_rapidapi("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    assert audio_path.endswith(".m4a")
+    assert expected_path in called_urls[0]
+
+
+def test_extract_audio_via_rapidapi_ignores_thumbnail_urls(monkeypatch, tmp_path) -> None:
+    from backend.services import rapidapi_downloader
+
+    def fake_get(url, *, headers=None, params=None, timeout=None, stream=False):
+        if not stream:
+            return FakeResponse(
+                payload={
+                    "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                    "medias": [
+                        {"mimeType": "audio/mp4", "url": "https://redirector.googlevideo.com/videoplayback?mime=audio/mp4"}
+                    ],
+                }
+            )
+        assert "googlevideo.com/videoplayback" in url
+        return FakeResponse(chunks=[b"audio-content"])
+
+    monkeypatch.setattr(
+        rapidapi_downloader,
+        "get_settings",
+        lambda: SimpleNamespace(
+            rapidapi_key="rapidapi-key",
+            rapidapi_host_1="youtube-search-and-download.p.rapidapi.com",
+            rapidapi_host_2="",
+            rapidapi_host_3="",
+        ),
+    )
+    monkeypatch.setattr(rapidapi_downloader, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(rapidapi_downloader.requests, "get", fake_get)
+
+    audio_path = extract_audio_via_rapidapi("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    assert audio_path.endswith(".m4a")
