@@ -88,6 +88,8 @@ def test_extract_audio_returns_postprocessed_m4a_file(monkeypatch, tmp_path) -> 
     assert captured_options["extractor_args"] == {
         "youtube": {"player_client": ["web", "default"]}
     }
+    assert captured_options["username"] == "oauth2"
+    assert captured_options["password"] == ""
 
 
 def test_extract_audio_skips_stale_cookie_file(monkeypatch, tmp_path) -> None:
@@ -114,6 +116,28 @@ def test_extract_audio_skips_stale_cookie_file(monkeypatch, tmp_path) -> None:
 
     try:
         assert "cookiefile" not in captured_options
+    finally:
+        cleanup_audio(audio_path)
+
+
+def test_extract_audio_ignores_cookie_permission_error(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    class CookiePermissionDenied:
+        def exists(self) -> bool:
+            raise PermissionError("permission denied")
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YOUTUBE_COOKIE_FILE", CookiePermissionDenied())
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", FakeYoutubeDL)
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+    )
+
+    try:
+        assert Path(audio_path).exists()
     finally:
         cleanup_audio(audio_path)
 
@@ -183,16 +207,20 @@ def test_extract_audio_retries_after_rotation(monkeypatch, tmp_path) -> None:
     assert rotation_calls == ["http://10.0.1.1:40002/rotate"]
 
 
-def test_extract_audio_raises_after_failed_retry(monkeypatch, tmp_path) -> None:
+def test_extract_audio_uses_rapidapi_after_second_youtube_block(monkeypatch, tmp_path) -> None:
     from backend.services import audio_extractor
 
     extract_attempts: list[str] = []
+    rotation_calls: list[str] = []
+    rapidapi_calls: list[str] = []
+    rapidapi_audio = tmp_path / "rapidapi.m4a"
+    rapidapi_audio.write_bytes(b"rapidapi-audio")
 
-    class RetryFailsYoutubeDL:
+    class AlwaysBlockedYoutubeDL:
         def __init__(self, options: dict[str, object]) -> None:
             self.options = options
 
-        def __enter__(self) -> "RetryFailsYoutubeDL":
+        def __enter__(self) -> "AlwaysBlockedYoutubeDL":
             return self
 
         def __exit__(self, exc_type, exc, tb) -> None:
@@ -205,13 +233,69 @@ def test_extract_audio_raises_after_failed_retry(monkeypatch, tmp_path) -> None:
             raise DownloadError("HTTP Error 429: Too Many Requests")
 
     monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
-    monkeypatch.setattr(audio_extractor, "YoutubeDL", RetryFailsYoutubeDL)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", AlwaysBlockedYoutubeDL)
     monkeypatch.setattr(audio_extractor, "get_settings", lambda: SimpleNamespace(
-        warp_rotation_url="http://10.0.1.1:40002/rotate"
+        warp_rotation_url="http://10.0.1.1:40002/rotate",
+        rapidapi_key="rapidapi-key",
+        rapidapi_host_1="host-1",
+        rapidapi_host_2="host-2",
+        rapidapi_host_3="host-3",
+    ))
+    monkeypatch.setattr(
+        audio_extractor,
+        "rotate_warp_ip",
+        lambda url: rotation_calls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        audio_extractor,
+        "extract_audio_via_rapidapi",
+        lambda url: rapidapi_calls.append(url) or str(rapidapi_audio),
+    )
+
+    audio_path = extract_audio(
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "dQw4w9WgXcQ",
+    )
+
+    assert audio_path == str(rapidapi_audio)
+    assert len(extract_attempts) == 2
+    assert len(rotation_calls) == 1
+    assert rapidapi_calls == ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]
+
+
+def test_extract_audio_raises_when_ytdlp_and_rapidapi_fail(monkeypatch, tmp_path) -> None:
+    from backend.services import audio_extractor
+
+    class AlwaysBlockedYoutubeDL:
+        def __init__(self, options: dict[str, object]) -> None:
+            self.options = options
+
+        def __enter__(self) -> "AlwaysBlockedYoutubeDL":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def extract_info(self, url: str, download: bool) -> dict[str, str]:
+            raise DownloadError("HTTP Error 429: Too Many Requests")
+
+    monkeypatch.setattr(audio_extractor, "TEMP_AUDIO_DIR", tmp_path)
+    monkeypatch.setattr(audio_extractor, "YoutubeDL", AlwaysBlockedYoutubeDL)
+    monkeypatch.setattr(audio_extractor, "get_settings", lambda: SimpleNamespace(
+        warp_rotation_url="http://10.0.1.1:40002/rotate",
+        rapidapi_key="rapidapi-key",
+        rapidapi_host_1="host-1",
+        rapidapi_host_2="host-2",
+        rapidapi_host_3="host-3",
     ))
     monkeypatch.setattr(audio_extractor, "rotate_warp_ip", lambda url: True)
+    monkeypatch.setattr(
+        audio_extractor,
+        "extract_audio_via_rapidapi",
+        lambda url: (_ for _ in ()).throw(RuntimeError("rapidapi exhausted")),
+    )
 
-    with pytest.raises(DownloadError, match="HTTP Error 429"):
+    with pytest.raises(RuntimeError, match="rapidapi exhausted"):
         extract_audio(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "dQw4w9WgXcQ",
@@ -226,8 +310,15 @@ def test_extract_audio_downloads_real_youtube_audio() -> None:
             "jNQXAC9IVRw",
         )
     except DownloadError as exc:
-        if "not a bot" in str(exc).lower():
+        message = str(exc).lower()
+        if "not a bot" in message:
             pytest.skip("YouTube blocked the integration download with an anti-bot challenge")
+        if "oauth is no longer supported" in message:
+            pytest.skip("Current yt-dlp build does not support OAuth2 login")
+        raise
+    except OSError as exc:
+        if "read-only file system" in str(exc).lower():
+            pytest.skip("Integration environment cannot write yt-dlp cookie cache")
         raise
 
     try:
