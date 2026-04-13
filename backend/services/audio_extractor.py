@@ -20,6 +20,13 @@ _OAUTH_UNSUPPORTED_PATTERNS = (
     "oauth is no longer supported",
     "login with oauth is no longer supported",
 )
+_PROXY_FAILURE_PATTERNS = (
+    "unable to download api page",
+    "failed to establish a new connection",
+    "connection refused",
+    "sockshttpsconnection",
+    "sockshhpsconnection",
+)
 
 
 def get_settings():
@@ -81,7 +88,9 @@ def extract_audio(url: str, video_id: str, proxy: str = "") -> str:
         if is_youtube_block(exc):
             return True
         message = str(exc).lower()
-        return any(pattern in message for pattern in _OAUTH_UNSUPPORTED_PATTERNS)
+        if any(pattern in message for pattern in _OAUTH_UNSUPPORTED_PATTERNS):
+            return True
+        return any(pattern in message for pattern in _PROXY_FAILURE_PATTERNS)
 
     try:
         _extract_with_oauth_fallback()
