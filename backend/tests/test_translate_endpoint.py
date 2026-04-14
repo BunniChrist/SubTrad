@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 from backend.main import app
 
@@ -107,6 +108,288 @@ def test_translate_rejects_unsupported_languages() -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Unsupported target language"
+
+
+def test_transcribe_media_url_returns_translate_compatible_payload(monkeypatch) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+    cleanup_calls: list[str] = []
+
+    monkeypatch.setattr(
+        translate,
+        "download_media_url",
+        lambda media_url, timeout=60.0: "/tmp/subtrad/apify_video.mp4",
+    )
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Recovered Video"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
+            "language": "en",
+            "timings": {"preprocess_seconds": 0.2, "transcription_seconds": 0.5},
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+            "detected_language": source_lang,
+            "translation_status": "translated",
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "cleanup_audio",
+        lambda audio_path: cleanup_calls.append(audio_path),
+    )
+
+    response = client.post(
+        "/api/transcribe-media-url",
+        json={
+            "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "media_url": "https://cdn.example.com/video.mp4",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["platform"] == "youtube"
+    assert data["video_id"] == "dQw4w9WgXcQ"
+    assert data["source"] == "whisper_transcription"
+    assert data["needs_transcription"] is True
+    assert data["duration_seconds"] == 120
+    assert data["subtitles"] == [{"start": 0.0, "end": 1.5, "text": "Bonjour"}]
+    assert data["exports"]["txt"] == "Hello"
+    assert cleanup_calls == ["/tmp/subtrad/apify_video.mp4"]
+
+
+def test_transcribe_media_url_rejects_invalid_source_url() -> None:
+    response = client.post(
+        "/api/transcribe-media-url",
+        json={
+            "source_url": "https://example.com/video/123",
+            "media_url": "https://cdn.example.com/video.mp4",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unsupported video URL"
+
+
+def test_transcribe_media_url_returns_422_when_media_download_fails(monkeypatch) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+    monkeypatch.setattr(
+        translate,
+        "download_media_url",
+        lambda media_url, timeout=60.0: (_ for _ in ()).throw(RuntimeError("403")),
+    )
+
+    response = client.post(
+        "/api/transcribe-media-url",
+        json={
+            "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "media_url": "https://cdn.example.com/video.mp4",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Could not extract audio from this video.",
+        "error_code": "audio_extraction_failed",
+    }
+
+
+def test_transcribe_media_url_logs_download_failure(monkeypatch, caplog) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+    monkeypatch.setattr(
+        translate,
+        "download_media_url",
+        lambda media_url, timeout=60.0: (_ for _ in ()).throw(RuntimeError("403 forbidden")),
+    )
+
+    with caplog.at_level("WARNING"):
+        response = client.post(
+            "/api/transcribe-media-url",
+            json={
+                "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "media_url": "https://cdn.example.com/video.mp4",
+                "target_lang": "fr",
+            },
+        )
+
+    assert response.status_code == 422
+    assert "External media download failed" in caplog.text
+    assert "video_id=dQw4w9WgXcQ" in caplog.text
+
+
+def test_transcribe_local_file_returns_translate_compatible_payload(monkeypatch, tmp_path) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+    local_audio = tmp_path / "dQw4w9WgXcQ.mp3"
+    local_audio.write_bytes(b"fake mp3 bytes")
+    cleanup_calls: list[str] = []
+
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Recovered Video"},
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
+            "language": "en",
+            "timings": {"preprocess_seconds": 0.2, "transcription_seconds": 0.5},
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+            "detected_language": source_lang,
+            "translation_status": "translated",
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "cleanup_audio",
+        lambda audio_path: cleanup_calls.append(audio_path),
+    )
+
+    response = client.post(
+        "/api/transcribe-local-file",
+        json={
+            "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "file_path": str(local_audio),
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["platform"] == "youtube"
+    assert data["video_id"] == "dQw4w9WgXcQ"
+    assert data["source"] == "whisper_transcription"
+    assert data["needs_transcription"] is True
+    assert data["duration_seconds"] == 120
+    assert data["subtitles"] == [{"start": 0.0, "end": 1.5, "text": "Bonjour"}]
+    assert data["exports"]["txt"] == "Hello"
+    assert len(cleanup_calls) == 1
+    assert cleanup_calls[0] != str(local_audio)
+    assert local_audio.exists() is True
+
+
+def test_transcribe_local_file_stages_copy_before_transcription(monkeypatch, tmp_path) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+    source_audio = tmp_path / "dQw4w9WgXcQ.mp3"
+    source_audio.write_bytes(b"fake mp3 bytes")
+    seen_audio_paths: list[str] = []
+    cleanup_calls: list[str] = []
+
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Recovered Video"},
+    )
+
+    def fake_transcribe(audio_path: str) -> dict[str, object]:
+        seen_audio_paths.append(audio_path)
+        assert audio_path != str(source_audio)
+        assert Path(audio_path).exists()
+        assert Path(audio_path).read_bytes() == source_audio.read_bytes()
+        return {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
+            "language": "en",
+            "timings": {"preprocess_seconds": 0.2, "transcription_seconds": 0.5},
+        }
+
+    monkeypatch.setattr(translate, "transcribe_audio_with_metadata", fake_transcribe)
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+            "detected_language": source_lang,
+            "translation_status": "translated",
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "cleanup_audio",
+        lambda audio_path: cleanup_calls.append(audio_path),
+    )
+
+    response = client.post(
+        "/api/transcribe-local-file",
+        json={
+            "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "file_path": str(source_audio),
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    assert seen_audio_paths and seen_audio_paths[0] != str(source_audio)
+    assert cleanup_calls == seen_audio_paths
+    assert source_audio.exists() is True
+
+
+def test_transcribe_local_file_returns_422_when_local_file_is_missing(monkeypatch) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+
+    response = client.post(
+        "/api/transcribe-local-file",
+        json={
+            "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "file_path": "/tmp/does-not-exist.mp3",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "Local audio file not found.",
+        "error_code": "audio_file_not_found",
+    }
 
 
 def test_translate_allows_videos_up_to_five_hours(monkeypatch) -> None:
@@ -806,6 +1089,69 @@ def test_youtube_no_captions_falls_back_to_whisper(monkeypatch) -> None:
             "[00:00] Hello"
         ),
     }
+    assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
+
+
+def test_youtube_caption_fetch_exception_falls_back_to_whisper(monkeypatch) -> None:
+    from backend.routers import translate
+
+    FakeSubtitleCache.reset()
+    FakeRequestCounter.reset()
+    monkeypatch.setattr(translate, "SubtitleCache", FakeSubtitleCache)
+    monkeypatch.setattr(translate, "RequestCounter", FakeRequestCounter)
+    cleanup_calls: list[str] = []
+
+    monkeypatch.setattr(
+        translate,
+        "get_video_info",
+        lambda video_id, api_key: {"duration_seconds": 120, "title": "Proxy Failure"},
+    )
+
+    def raise_caption_error(video_id, target_lang, api_key, **kwargs):
+        raise RuntimeError("Malformed reply")
+
+    monkeypatch.setattr(translate, "fetch_captions_via_api", raise_caption_error)
+    monkeypatch.setattr(
+        translate,
+        "extract_audio",
+        lambda url, video_id, proxy="": f"/tmp/subtrad/{video_id}.m4a",
+    )
+    monkeypatch.setattr(
+        translate,
+        "transcribe_audio_with_metadata",
+        lambda audio_path: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Hello"}],
+            "language": "en",
+            "timings": {"preprocess_seconds": 0.12, "transcription_seconds": 0.41},
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "translate_subtitles_with_metadata",
+        lambda subtitles, target_lang, api_key, source_lang=None: {
+            "segments": [{"start": 0.0, "end": 1.5, "text": "Bonjour"}],
+            "detected_language": source_lang,
+            "translation_status": "translated",
+        },
+    )
+    monkeypatch.setattr(
+        translate,
+        "cleanup_audio",
+        lambda audio_path: cleanup_calls.append(audio_path),
+    )
+
+    response = client.post(
+        "/api/translate",
+        json={
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "target_lang": "fr",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source"] == "whisper_transcription"
+    assert data["needs_transcription"] is True
     assert cleanup_calls == ["/tmp/subtrad/dQw4w9WgXcQ.m4a"]
 
 

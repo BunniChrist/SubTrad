@@ -8,6 +8,18 @@ class TranslateRequest(BaseModel):
     target_lang: str
 
 
+class TranscribeMediaUrlRequest(BaseModel):
+    source_url: str
+    media_url: str
+    target_lang: str
+
+
+class TranscribeLocalFileRequest(BaseModel):
+    source_url: str
+    file_path: str
+    target_lang: str
+
+
 class SubtitleEntry(BaseModel):
     start: str
     end: str

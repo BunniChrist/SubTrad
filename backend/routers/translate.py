@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -12,8 +14,13 @@ try:
     from backend.api_errors import ApiError
     from backend.config import get_settings
     from backend.export_formats import to_md, to_txt, to_vtt
-    from backend.models import TranslateRequest, TranslateResponse
-    from backend.services.audio_extractor import cleanup_audio, extract_audio
+    from backend.models import (
+        TranscribeLocalFileRequest,
+        TranscribeMediaUrlRequest,
+        TranslateRequest,
+        TranslateResponse,
+    )
+    from backend.services.audio_extractor import cleanup_audio, download_media_url, extract_audio
     from backend.services.cache import SubtitleCache
     from backend.services.duration_checker import check_duration
     from backend.services.request_counter import RequestCounter
@@ -33,8 +40,13 @@ except ModuleNotFoundError:  # pragma: no cover - runtime fallback for `uvicorn 
     from api_errors import ApiError
     from config import get_settings
     from export_formats import to_md, to_txt, to_vtt
-    from models import TranslateRequest, TranslateResponse
-    from services.audio_extractor import cleanup_audio, extract_audio
+    from models import (
+        TranscribeLocalFileRequest,
+        TranscribeMediaUrlRequest,
+        TranslateRequest,
+        TranslateResponse,
+    )
+    from services.audio_extractor import cleanup_audio, download_media_url, extract_audio
     from services.cache import SubtitleCache
     from services.duration_checker import check_duration
     from services.request_counter import RequestCounter
@@ -196,6 +208,72 @@ def _timing_value(payload: object, key: str) -> float:
         return 0.0
 
 
+def _duration_seconds_for_source(*, source_url: str, platform: str, video_id: str, settings) -> int:
+    try:
+        if platform == "youtube":
+            info = get_video_info(video_id, settings.youtube_api_key)
+            if isinstance(info, dict):
+                value = info.get("duration_seconds")
+                if isinstance(value, int):
+                    return value
+        return int(fetch_video_duration_seconds(source_url, proxy=settings.warp_proxy_url or settings.proxy_url))
+    except Exception:
+        return 0
+
+
+def _build_whisper_response(
+    *,
+    platform: str,
+    video_id: str,
+    target_lang: str,
+    duration_seconds: int,
+    transcription_result: object,
+    settings,
+    cache: SubtitleCache,
+    counter: RequestCounter,
+) -> TranslateResponse:
+    transcription_segments = _extract_segments(transcription_result)
+    if not transcription_segments:
+        logger.warning(
+            "External media transcription produced no speech platform=%s video_id=%s",
+            platform,
+            video_id,
+        )
+        _platform_error(
+            "No speech detected in this video.",
+            "no_speech_detected",
+        )
+
+    translation_result = translate_subtitles_with_metadata(
+        transcription_segments,
+        target_lang,
+        settings.openai_api_key,
+        source_lang=_extract_language(transcription_result),
+    )
+
+    response = build_translate_response(
+        platform=platform,
+        video_id=video_id,
+        subtitles=_translation_segments(translation_result),
+        duration_seconds=duration_seconds,
+        needs_transcription=True,
+        source="whisper_transcription",
+        target_lang=target_lang,
+        detected_language=_translation_detected_language(translation_result),
+        translation_status=_translation_status(translation_result),
+        exports=_build_transcript_exports(
+            segments=transcription_segments,
+            platform=platform,
+            video_id=video_id,
+            language=_extract_language(transcription_result),
+        ),
+    )
+    counter.increment(video_id, target_lang)
+    if counter.should_cache(video_id, target_lang):
+        cache.store(video_id, target_lang, response.model_dump())
+    return response
+
+
 def _run_whisper_fallback(
     *,
     audio_source_url: str,
@@ -226,58 +304,93 @@ def _run_whisper_fallback(
 
     try:
         transcription_result = transcribe_audio_with_metadata(audio_path)
+        preprocess_elapsed = _timing_value(transcription_result, "preprocess_seconds")
+        transcription_elapsed = _timing_value(transcription_result, "transcription_seconds")
+        total_elapsed = time.perf_counter() - total_started_at
+        logger.info(
+            "Whisper fallback timings platform=%s video_id=%s download_seconds=%.3f preprocess_seconds=%.3f transcription_seconds=%.3f total_seconds=%.3f",
+            platform,
+            video_id,
+            download_elapsed,
+            preprocess_elapsed,
+            transcription_elapsed,
+            total_elapsed,
+        )
+        return _build_whisper_response(
+            platform=platform,
+            video_id=video_id,
+            target_lang=target_lang,
+            duration_seconds=duration_seconds,
+            transcription_result=transcription_result,
+            settings=settings,
+            cache=cache,
+            counter=counter,
+        )
     finally:
         if audio_path:
             cleanup_audio(audio_path)
 
-    transcription_segments = _extract_segments(transcription_result)
-    if not transcription_segments:
-        _platform_error(
-            "No speech detected in this video.",
-            "no_speech_detected",
-        )
 
-    preprocess_elapsed = _timing_value(transcription_result, "preprocess_seconds")
-    transcription_elapsed = _timing_value(transcription_result, "transcription_seconds")
-    total_elapsed = time.perf_counter() - total_started_at
-    logger.info(
-        "Whisper fallback timings platform=%s video_id=%s download_seconds=%.3f preprocess_seconds=%.3f transcription_seconds=%.3f total_seconds=%.3f",
-        platform,
-        video_id,
-        download_elapsed,
-        preprocess_elapsed,
-        transcription_elapsed,
-        total_elapsed,
-    )
-
-    translation_result = translate_subtitles_with_metadata(
-        transcription_segments,
-        target_lang,
-        settings.openai_api_key,
-        source_lang=_extract_language(transcription_result),
-    )
-
-    response = build_translate_response(
-        platform=platform,
-        video_id=video_id,
-        subtitles=_translation_segments(translation_result),
-        duration_seconds=duration_seconds,
-        needs_transcription=True,
-        source="whisper_transcription",
-        target_lang=target_lang,
-        detected_language=_translation_detected_language(translation_result),
-        translation_status=_translation_status(translation_result),
-        exports=_build_transcript_exports(
-            segments=transcription_segments,
+def _transcribe_existing_audio_path(
+    *,
+    audio_path: str,
+    platform: str,
+    video_id: str,
+    target_lang: str,
+    duration_seconds: int,
+    settings,
+    cache: SubtitleCache,
+    counter: RequestCounter,
+) -> TranslateResponse:
+    try:
+        transcription_result = transcribe_audio_with_metadata(audio_path)
+        return _build_whisper_response(
             platform=platform,
             video_id=video_id,
-            language=_extract_language(transcription_result),
-        ),
-    )
-    counter.increment(video_id, target_lang)
-    if counter.should_cache(video_id, target_lang):
-        cache.store(video_id, target_lang, response.model_dump())
-    return response
+            target_lang=target_lang,
+            duration_seconds=duration_seconds,
+            transcription_result=transcription_result,
+            settings=settings,
+            cache=cache,
+            counter=counter,
+        )
+    except ApiError:
+        raise
+    except ValueError:
+        logger.warning(
+            "External media transcription failed platform=%s video_id=%s",
+            platform,
+            video_id,
+        )
+        _platform_error(
+            "Audio transcription failed.",
+            "audio_transcription_failed",
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected external media transcription failure for platform=%s video_id=%s",
+            platform,
+            video_id,
+        )
+        raise ApiError(
+            status_code=500,
+            content={
+                "detail": "Transcription pipeline failed.",
+                "error_code": "internal_error",
+            },
+        )
+
+
+def _stage_local_audio_file(source_path: Path) -> str:
+    suffix = source_path.suffix or ".bin"
+    fd, staged_path = tempfile.mkstemp(prefix="subtrad-local-audio-", suffix=suffix)
+    Path(staged_path).unlink(missing_ok=True)
+    try:
+        shutil.copyfile(source_path, staged_path)
+    except Exception:
+        Path(staged_path).unlink(missing_ok=True)
+        raise
+    return staged_path
 
 
 @router.post("/translate", response_model=TranslateResponse)
@@ -325,6 +438,157 @@ def translate_video(request: TranslateRequest) -> TranslateResponse:
     )
 
 
+@router.post("/transcribe-media-url", response_model=TranslateResponse)
+def transcribe_media_url(request: TranscribeMediaUrlRequest) -> TranslateResponse:
+    settings = get_settings()
+
+    if request.target_lang not in settings.supported_languages:
+        raise HTTPException(status_code=400, detail="Unsupported target language")
+
+    if not validate_url(request.source_url):
+        raise HTTPException(status_code=400, detail="Unsupported video URL")
+
+    platform = detect_platform(request.source_url)
+    if platform is None:
+        raise HTTPException(status_code=400, detail="Unsupported video URL")
+
+    video_id = extract_video_id(request.source_url, platform)
+    cache = SubtitleCache(settings.cache_db_path)
+    counter = RequestCounter(settings.cache_db_path, threshold=settings.cache_threshold)
+
+    cached = cache.retrieve(video_id, request.target_lang)
+    if cached is not None:
+        cached["translation_status"] = "cached"
+        return TranslateResponse(**cached)
+
+    duration_seconds = _duration_seconds_for_source(
+        source_url=request.source_url,
+        platform=platform,
+        video_id=video_id,
+        settings=settings,
+    )
+    duration_result = check_duration(duration_seconds)
+    if duration_seconds and not duration_result.allowed:
+        raise ApiError(
+            status_code=403,
+            content={
+                "detail": "Video exceeds maximum duration",
+                "redirect": duration_result.redirect,
+                "duration_seconds": duration_result.duration_seconds,
+            },
+        )
+
+    try:
+        audio_path = download_media_url(request.media_url, timeout=60.0)
+    except (RuntimeError, OSError):
+        logger.warning(
+            "External media download failed platform=%s video_id=%s media_url=%s",
+            platform,
+            video_id,
+            request.media_url,
+        )
+        _platform_error(
+            "Could not extract audio from this video.",
+            "audio_extraction_failed",
+        )
+
+    try:
+        return _transcribe_existing_audio_path(
+            audio_path=audio_path,
+            platform=platform,
+            video_id=video_id,
+            target_lang=request.target_lang,
+            duration_seconds=duration_result.duration_seconds if duration_seconds else 0,
+            settings=settings,
+            cache=cache,
+            counter=counter,
+        )
+    finally:
+        cleanup_audio(audio_path)
+
+
+@router.post("/transcribe-local-file", response_model=TranslateResponse)
+def transcribe_local_file(request: TranscribeLocalFileRequest) -> TranslateResponse:
+    settings = get_settings()
+
+    if request.target_lang not in settings.supported_languages:
+        raise HTTPException(status_code=400, detail="Unsupported target language")
+
+    if not validate_url(request.source_url):
+        raise HTTPException(status_code=400, detail="Unsupported video URL")
+
+    platform = detect_platform(request.source_url)
+    if platform is None:
+        raise HTTPException(status_code=400, detail="Unsupported video URL")
+
+    video_id = extract_video_id(request.source_url, platform)
+    cache = SubtitleCache(settings.cache_db_path)
+    counter = RequestCounter(settings.cache_db_path, threshold=settings.cache_threshold)
+
+    cached = cache.retrieve(video_id, request.target_lang)
+    if cached is not None:
+        cached["translation_status"] = "cached"
+        return TranslateResponse(**cached)
+
+    local_audio = Path(request.file_path)
+    if not local_audio.is_file():
+        logger.warning(
+            "Local audio file missing platform=%s video_id=%s file_path=%s",
+            platform,
+            video_id,
+            request.file_path,
+        )
+        _platform_error(
+            "Local audio file not found.",
+            "audio_file_not_found",
+        )
+
+    duration_seconds = _duration_seconds_for_source(
+        source_url=request.source_url,
+        platform=platform,
+        video_id=video_id,
+        settings=settings,
+    )
+    duration_result = check_duration(duration_seconds)
+    if duration_seconds and not duration_result.allowed:
+        raise ApiError(
+            status_code=403,
+            content={
+                "detail": "Video exceeds maximum duration",
+                "redirect": duration_result.redirect,
+                "duration_seconds": duration_result.duration_seconds,
+            },
+        )
+
+    try:
+        staged_audio_path = _stage_local_audio_file(local_audio)
+    except OSError:
+        logger.warning(
+            "Local audio file could not be staged platform=%s video_id=%s file_path=%s",
+            platform,
+            video_id,
+            request.file_path,
+        )
+        _platform_error(
+            "Could not prepare local audio file.",
+            "audio_file_unreadable",
+        )
+
+    try:
+        return _transcribe_existing_audio_path(
+            audio_path=staged_audio_path,
+            platform=platform,
+            video_id=video_id,
+            target_lang=request.target_lang,
+            duration_seconds=duration_result.duration_seconds if duration_seconds else 0,
+            settings=settings,
+            cache=cache,
+            counter=counter,
+        )
+    finally:
+        cleanup_audio(staged_audio_path)
+
+
 def _handle_youtube(
     *,
     video_id: str,
@@ -358,13 +622,17 @@ def _handle_youtube(
             },
         )
 
-    subtitles_result = fetch_captions_via_api(
-        video_id,
-        target_lang,
-        settings.youtube_api_key,
-        proxy=settings.warp_proxy_url or settings.proxy_url,
-        cookie_file=str(YOUTUBE_COOKIE_FILE) if YOUTUBE_COOKIE_FILE.exists() else None,
-    )
+    try:
+        subtitles_result = fetch_captions_via_api(
+            video_id,
+            target_lang,
+            settings.youtube_api_key,
+            proxy=settings.warp_proxy_url or settings.proxy_url,
+            cookie_file=str(YOUTUBE_COOKIE_FILE) if YOUTUBE_COOKIE_FILE.exists() else None,
+        )
+    except Exception as exc:
+        logger.warning("YouTube caption fetch failed for %s: %s", video_id, exc)
+        subtitles_result = None
     subtitle_source = "existing_captions"
     if isinstance(subtitles_result, tuple):
         subtitles, subtitle_source = subtitles_result
